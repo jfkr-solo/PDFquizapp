@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/pdf-quiz/question_book.schema.json",
+  "title": "問題集データ（教材JSON）",
+  "type": "object",
+  "required": ["book_id", "book_title", "version", "questions"],
+  "properties": {
+    "book_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{2,32}$"},
+    "book_title": {"type": "string", "minLength": 1},
+    "version": {"type": "string", "pattern": "^\\d+\\.\\d+(\\.\\d+)?$"},
+    "source_pdf": {
+      "type": "object",
+      "required": ["file", "sha256", "pages"],
+      "properties": {
+        "file": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "pages": {"type": "integer", "minimum": 1}
+      }
+    },
+    "generated_at": {"type": "string"},
+    "expected_question_count": {"type": ["integer", "null"], "minimum": 1},
+    "answers_count": {"type": ["integer", "null"]},
+    "exam_policy": {
+      "type": "object",
+      "properties": {"allowed_statuses": {"type": "array", "items": {"$ref": "#/$defs/status"}}}
+    },
+    "book_issues": {"type": "array", "items": {"$ref": "#/$defs/issue"}},
+    "questions": {"type": "array", "items": {"$ref": "#/$defs/question"}}
+  },
+  "$defs": {
+    "status": {"enum": ["pending", "auto_ok", "verified", "rejected"]},
+    "issue": {
+      "type": "object",
+      "required": ["code", "level", "message"],
+      "properties": {
+        "code": {"type": "string"},
+        "level": {"enum": ["error", "warning", "review"]},
+        "message": {"type": "string"}
+      }
+    },
+    "option": {
+      "type": "object",
+      "required": ["id", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^([A-H]|T|F)$"},
+        "label": {"type": "string"},
+        "text": {"type": "string"}
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": ["path", "page", "required"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^images/[^/]+\\.(png|jpg|jpeg)$"},
+        "page": {"type": "integer", "minimum": 1},
+        "required": {"type": "boolean"},
+        "kind": {"enum": ["embedded", "page_region", "manual"]}
+      }
+    },
+    "numeric_answer": {
+      "type": "object",
+      "required": ["value"],
+      "properties": {
+        "value": {"type": "number"},
+        "unit": {"type": ["string", "null"]},
+        "tolerance": {"type": "number", "minimum": 0}
+      }
+    },
+    "question": {
+      "type": "object",
+      "required": ["id", "question_type", "question", "options", "correct_answers", "explanation",
+                   "source", "audio_text", "tags", "validation_status"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+-Q\\d{4,}$"},
+        "chapter": {"type": "string"},
+        "category": {"type": "string"},
+        "difficulty": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
+        "question_type": {"enum": ["single_choice", "multiple_choice", "true_false", "numeric"]},
+        "question": {"type": "string"},
+        "options": {"type": "array", "items": {"$ref": "#/$defs/option"}},
+        "correct_answers": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "numeric_answer": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/numeric_answer"}]},
+        "explanation": {"type": "string"},
+        "images": {"type": "array", "items": {"$ref": "#/$defs/image"}},
+        "source": {
+          "type": "object",
+          "required": ["page", "question_number"],
+          "properties": {
+            "page": {"type": "integer", "minimum": 1},
+            "question_number": {"type": "integer", "minimum": 1},
+            "answer_page": {"type": ["integer", "null"], "minimum": 1},
+            "raw_text": {"type": "string"},
+            "extraction": {"enum": ["text", "ocr", "ai_assisted", "manual"]}
+          }
+        },
+        "audio_text": {"type": "string"},
+        "audio_answer_text": {"type": "string"},
+        "audio": {"type": "object", "additionalProperties": {"type": "string"}},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "validation_status": {"$ref": "#/$defs/status"},
+        "validation_issues": {"type": "array", "items": {"$ref": "#/$defs/issue"}},
+        "validation_history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["at", "by", "status"],
+            "properties": {"at": {"type": "string"}, "by": {"type": "string"}, "status": {"$ref": "#/$defs/status"}, "note": {"type": "string"}}
+          }
+        },
+        "content_hash": {"type": "string"},
+        "verified_hash": {"type": ["string", "null"]}
+      },
+      "allOf": [
+        {
+          "$comment": "出題可能（auto_ok / verified）な問題は、問題文と正解が必ずそろっていること",
+          "if": {"properties": {"validation_status": {"enum": ["auto_ok", "verified"]}}},
+          "then": {"properties": {"question": {"minLength": 1}}}
+        },
+        {
+          "if": {"properties": {"validation_status": {"enum": ["auto_ok", "verified"]},
+                                 "question_type": {"enum": ["single_choice", "multiple_choice", "true_false"]}}},
+          "then": {"properties": {"options": {"minItems": 2}, "correct_answers": {"minItems": 1}}}
+        },
+        {
+          "if": {"properties": {"validation_status": {"enum": ["auto_ok", "verified"]}, "question_type": {"const": "single_choice"}}},
+          "then": {"properties": {"correct_answers": {"maxItems": 1}}}
+        },
+        {
+          "if": {"properties": {"validation_status": {"enum": ["auto_ok", "verified"]}, "question_type": {"const": "numeric"}}},
+          "then": {"properties": {"numeric_answer": {"$ref": "#/$defs/numeric_answer"}}}
+        }
+      ]
+    }
+  }
+}

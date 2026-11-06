@@ -1,0 +1,6 @@
+pymupdf>=1.24
+jsonschema>=4.21
+pytest>=8
+# 任意：AI補助を使う場合
+anthropic>=0.70
+pydantic>=2
