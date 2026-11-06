@@ -1,0 +1,9 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+# 原本PDFと生成データはコミットしない（著作権・容量のため）
+data/raw/*
+data/books/*
+!data/raw/.gitkeep
+!data/books/.gitkeep
