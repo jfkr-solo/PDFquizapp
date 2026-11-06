@@ -123,3 +123,11 @@ npm run build        # out/ に静的ファイルを書き出す（Vercel等に�
 - 模擬試験・弱点克服・復習は `verified` と `auto_ok` の問題だけを出します。通常学習でのみ「要確認の問題も含める」を選べます（バッジで明示）。
 - 1問回答するたびに進捗を保存するので、途中で閉じても「続きから」で再開できます。
 - `web/public/books/` には動作確認用のサンプル2冊（テキスト版・スキャン版）を同梱しています。実際の問題集は著作権の都合でコミットしないでください。
+
+## STEP 8：Supabase連携
+
+学習履歴をSupabaseに保存し、端末間で共有します。設定手順は [supabase/README.md](supabase/README.md) を参照してください。
+
+- `supabase/migrations/`：テーブル・RLS（本人の履歴だけ読める）・集計トリガー・正答率ビュー
+- `python -m pipeline.cli publish <book_id>`：検証済みの book.json を取り込み、元JSONを非公開バケットにバックアップ
+- アプリ：`NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_ANON_KEY` を設定すると、メールのリンクでログインできるようになります。履歴はまず端末に保存し、ログイン中は自動で同期します（未設定ならこれまでどおり端末内のみ）

@@ -18,7 +18,7 @@ const book: Book = {
   ],
 };
 const log = (questionId: string, correct: boolean, at: string): AnswerLog =>
-  ({ bookId: "B", questionId, selected: [], correct, answeredAt: at, elapsedMs: 1000, mode: "normal" });
+  ({ id: `${questionId}-${at}`, bookId: "B", questionId, selected: [], correct, answeredAt: at, elapsedMs: 1000, mode: "normal" });
 
 describe("eligible", () => {
   it("模擬試験には要確認・除外の問題を出さない", () => {

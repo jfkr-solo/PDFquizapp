@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import Account from "@/components/Account";
 import { loadIndex } from "@/lib/data";
 import { localStore } from "@/lib/storage";
 import type { BookIndexEntry } from "@/lib/types";
@@ -17,6 +18,7 @@ export default function Home() {
   return (
     <>
       <h1>問題集を選ぶ</h1>
+      <Account />
       {error && <div className="card">{error}</div>}
       {!books && !error && <p className="muted">読み込み中…</p>}
       {books?.length === 0 && (
