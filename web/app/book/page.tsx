@@ -6,6 +6,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { loadBook } from "@/lib/data";
 import { accuracyBy, eligible, isReady, MODE_LABEL, pickQuestions, statsByQuestion } from "@/lib/quiz";
 import { localStore } from "@/lib/storage";
+import { syncBook, type SyncResult } from "@/lib/sync";
 import type { AnswerLog, Book, Mode, Session } from "@/lib/types";
 
 function pct(r: number) {
@@ -24,13 +25,21 @@ function BookPage() {
   const [difficulty, setDifficulty] = useState("");
   const [random, setRandom] = useState(false);
   const [includePending, setIncludePending] = useState(false);
+  const [sync, setSync] = useState<SyncResult | null>(null);
 
   useEffect(() => {
     if (!id) return;
     loadBook(id).then(setBook).catch((e) => setError(String(e.message ?? e)));
-    setLogs(localStore.logs(id));
-    const s = localStore.session(id);
-    setSession(s && !s.finishedAt ? s : null);
+    const refresh = () => {
+      setLogs(localStore.logs(id));
+      const s = localStore.session(id);
+      setSession(s && !s.finishedAt ? s : null);
+    };
+    refresh();
+    syncBook(id).then((r) => {
+      setSync(r);
+      if (r.state === "ok") refresh(); // 他の端末の履歴を反映
+    });
   }, [id]);
 
   const filters = { chapter: chapter || undefined, category: category || undefined, difficulty: difficulty ? Number(difficulty) : undefined };
@@ -83,6 +92,9 @@ function BookPage() {
         出題できる問題 {ready.length}問 / 全{book.questions.length}問
         {pendingCount > 0 && <span className="badge warn" style={{ marginLeft: 8 }}>要確認 {pendingCount}問は模擬試験に出ません</span>}
       </div>
+
+      {sync?.state === "ok" && <div className="muted">履歴をクラウドと同期しました</div>}
+      {sync?.state === "error" && <div className="badge warn">{sync.message}</div>}
 
       {session && (
         <div className="card">

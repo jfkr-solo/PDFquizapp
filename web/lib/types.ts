@@ -38,6 +38,9 @@ export interface BookIndexEntry { book_id: string; book_title: string; version: 
 export type Mode = "normal" | "exam" | "weak" | "review";
 
 export interface AnswerLog {
+  id: string;              // UUID。端末で採番し、Supabaseへの二重送信を防ぐ
+  synced?: boolean;        // Supabaseに送信済みか
+  sessionId?: string;
   bookId: string;
   questionId: string;
   selected: string[];      // 選択肢ID。数値問題は入力文字列を1要素で
@@ -56,4 +59,5 @@ export interface Session {
   answers: Record<string, { selected: string[]; correct: boolean }>;
   startedAt: string;
   finishedAt?: string;
+  updatedAt?: string;      // 端末間でどちらが新しいかの判定用
 }

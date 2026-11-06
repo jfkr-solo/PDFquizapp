@@ -5,6 +5,7 @@
   python -m pipeline.cli validate IT001
   python -m pipeline.cli verify IT001 IT001-Q0003 --note "原本と照合"
   python -m pipeline.cli reject IT001 IT001-Q0004 --note "図が判読不能"
+  python -m pipeline.cli publish IT001          # Supabaseへ取り込み（STEP 8）
 
 各工程の出力は data/books/<book_id>/ に保存されます（pages.json → parsed.json → book.json → validation_report.md）。
 """
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -24,6 +26,18 @@ from .validate import validate_file
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
+
+
+def load_dotenv(path: Path = ROOT / ".env") -> None:
+    """.env の KEY=VALUE を環境変数に読み込む（既に設定済みの値は上書きしない）。"""
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            if v.strip():
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
 def book_dir(book_id: str) -> Path:
@@ -96,7 +110,19 @@ def _set_status(a, status: str) -> int:
     return _print_validation(validate_file(path, pages_path=out / "pages.json"), out)
 
 
+def cmd_publish(a) -> int:
+    from .supabase_import import PublishError, publish_book
+    try:
+        r = publish_book(book_dir(a.book_id) / "book.json")
+    except PublishError as e:
+        print(f"エラー: {e}", file=sys.stderr)
+        return 2
+    print(f"Supabaseに取り込みました: {r['book_id']} v{r['version']}（{r['questions']}問、うち出題可能 {r['ready']}問）")
+    return 0
+
+
 def main(argv=None) -> int:
+    load_dotenv()
     p = argparse.ArgumentParser(prog="pipeline", description="PDF問題集 → 教材JSON 変換")
     sub = p.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("convert", help="PDFを抽出・構造化・JSON化・検証まで一括実行")
@@ -119,6 +145,9 @@ def main(argv=None) -> int:
         s.add_argument("--note")
         s.add_argument("--by", default="reviewer")
         s.set_defaults(func=lambda a, st=status: _set_status(a, st))
+    pb = sub.add_parser("publish", help="book.json をSupabaseに取り込む（STEP 8）")
+    pb.add_argument("book_id")
+    pb.set_defaults(func=cmd_publish)
     a = p.parse_args(argv)
     try:
         return a.func(a)

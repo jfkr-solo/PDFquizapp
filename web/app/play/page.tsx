@@ -6,6 +6,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { bookBase, loadBook } from "@/lib/data";
 import { correctAnswerText, eligible, grade, MODE_LABEL, pickQuestions } from "@/lib/quiz";
 import { localStore } from "@/lib/storage";
+import { pushLogs, pushSession } from "@/lib/sync";
 import type { Book, Mode, Question, Session } from "@/lib/types";
 
 function newSession(book: Book, params: URLSearchParams): Session {
@@ -94,14 +95,16 @@ function Play() {
   const submit = () => {
     const correct = grade(q, answer);
     localStore.addLog({
-      bookId, questionId: q.id, selected: answer, correct,
+      bookId, questionId: q.id, selected: answer, correct, sessionId: session.id,
       answeredAt: new Date().toISOString(), elapsedMs: Date.now() - shownAt.current, mode: session.mode,
     });
+    void pushLogs(bookId); // ログイン中ならSupabaseへ送る（失敗しても端末に残り、次回送信）
     const next: Session = { ...session, answers: { ...session.answers, [q.id]: { selected: answer, correct } } };
     if (isExam) advance(next);
     else {
       setSession(next);
       localStore.saveSession(next);
+      void pushSession(next);
       setRevealed(true);
     }
   };
@@ -110,6 +113,7 @@ function Play() {
     const cursor = s.cursor + 1;
     const next: Session = { ...s, cursor, finishedAt: cursor >= s.questionIds.length ? new Date().toISOString() : undefined };
     localStore.saveSession(next);
+    void pushSession(next);
     setSession(next);
     window.scrollTo({ top: 0 });
   };

@@ -1,9 +1,10 @@
-// 学習履歴の保存先。STEP 7 はブラウザ（localStorage）、STEP 8 で Supabase 実装に差し替える。
+// 学習履歴の保存先。端末内（localStorage）に必ず保存し、Supabaseが設定されていれば lib/sync.ts で同期する。
 import type { AnswerLog, Session } from "./types";
 
 export interface HistoryStore {
   logs(bookId: string): AnswerLog[];
-  addLog(log: AnswerLog): void;
+  setLogs(bookId: string, logs: AnswerLog[]): void;
+  addLog(log: Omit<AnswerLog, "id"> & { id?: string }): AnswerLog;
   session(bookId: string): Session | null;
   saveSession(s: Session): void;
   clearSession(bookId: string): void;
@@ -29,11 +30,29 @@ function write(key: string, value: unknown): void {
   }
 }
 
+export function newId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+/** 古い版（idなし）で保存した履歴にidを振る */
+function withIds(logs: AnswerLog[]): AnswerLog[] {
+  return logs.map((l) => (l.id ? l : { ...l, id: newId() }));
+}
+
 export const localStore: HistoryStore = {
-  logs: (bookId) => read<AnswerLog[]>(LOGS + bookId, []),
-  addLog: (log) => write(LOGS + log.bookId, [...read<AnswerLog[]>(LOGS + log.bookId, []), log]),
+  logs: (bookId) => withIds(read<AnswerLog[]>(LOGS + bookId, [])),
+  setLogs: (bookId, logs) => write(LOGS + bookId, logs),
+  addLog: (log) => {
+    const full: AnswerLog = { ...log, id: log.id ?? newId(), synced: false };
+    write(LOGS + log.bookId, [...localStore.logs(log.bookId), full]);
+    return full;
+  },
   session: (bookId) => read<Session | null>(SESSION + bookId, null),
-  saveSession: (s) => write(SESSION + s.bookId, s),
+  saveSession: (s) => write(SESSION + s.bookId, { ...s, updatedAt: new Date().toISOString() }),
   clearSession: (bookId) => {
     try {
       window.localStorage.removeItem(SESSION + bookId);
