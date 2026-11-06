@@ -1,0 +1,16 @@
+[
+ {
+  "book_id": "SAMPLE01",
+  "book_title": "IT基礎問題集（サンプル）",
+  "version": "1.0",
+  "question_count": 6,
+  "ready_count": 6
+ },
+ {
+  "book_id": "SAMPLE01S",
+  "book_title": "IT基礎問題集（スキャン版サンプル）",
+  "version": "1.0",
+  "question_count": 6,
+  "ready_count": 0
+ }
+]
