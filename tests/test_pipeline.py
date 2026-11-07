@@ -223,3 +223,24 @@ def test_inverted_label_boxes_are_found():
     assert len(boxes) == 1
     x0, y0, x1, y1 = boxes[0]
     assert 190 <= x0 <= 210 and 90 <= y0 <= 110 and 490 <= x1 <= 510 and 210 <= y1 <= 230
+
+
+def test_answer_key_and_chapter_pages():
+    """解答ページが読めない本：別紙の正解一覧と章の開始ページで正解を付け、見つからない問題を指摘する。"""
+    from pipeline.answer_key import parse_answer_key
+    key = parse_answer_key("解答\n第1章\n第1問\n②\n第1章\n第2問\n①\n第2章\n第1問\n③\n第2章\n第2問\n④")
+    assert key[("第2章", 1)] == ["③"]
+    pj = _pages(
+        ["第2問 二つ目", "① a", "② b"],                    # スキャンの順番が前後している
+        ["第1問 一つ目", "① a", "② b"],
+        ["第1問 二章の一つ目", "① a", "② b", "③ c"],
+    )
+    parsed = parse_pages(pj, chapter_pages=[1, 3], answer_key=key)
+    qs = parsed["questions"]
+    assert [(q["chapter"], q["number"], q["answer_tokens"]) for q in qs] == [
+        ("第1章", 1, ["②"]), ("第1章", 2, ["①"]), ("第2章", 1, ["③"])]
+    assert [i["message"] for i in parsed["issues"] if i["code"] == "QUESTION_NOT_FOUND"] == ["正解一覧にある 第2章第2問 が問題ページから見つかりません"]
+    book = build_book(parsed, book_id="T03", title="t")
+    assert [q["id"] for q in book["questions"]] == ["T03-Q1001", "T03-Q1002", "T03-Q2001"]
+    assert book["questions"][0]["source"]["answer_source"] == "answer_key"
+    assert book["questions"][0]["correct_answers"] == ["B"]

@@ -20,7 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .build_json import build_file
-from .extract import ExtractError, extract_pdf, summarize
+from .answer_key import AnswerKeyError, load_answer_key
+from .extract import ExtractError, extract_pdf, sha256_of, summarize
 from .parse import parse_file
 from .validate import validate_file
 
@@ -55,11 +56,23 @@ def cmd_convert(a) -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     print("[1/4] PDF抽出 ...")
-    pages = extract_pdf(raw_pdf, out, ocr_lang=a.ocr_lang, force_ocr=a.force_ocr)
-    print("      " + summarize(pages))
+    pj = out / "pages.json"
+    if a.reuse_pages and pj.exists() and json.loads(pj.read_text(encoding="utf-8"))["source_pdf"]["sha256"] == sha256_of(raw_pdf):
+        print("      前回の抽出結果（pages.json）を使います")
+    else:
+        pages = extract_pdf(raw_pdf, out, ocr_lang=a.ocr_lang, force_ocr=a.force_ocr)
+        print("      " + summarize(pages))
 
     print("[2/4] 問題・解答の構造化 ...")
-    parsed = parse_file(out / "pages.json", out / "parsed.json")
+    chapter_pages = [int(x) for x in a.chapter_pages.split(",")] if a.chapter_pages else None
+    key = None
+    if a.answer_key:
+        key_src = raw_dir / ("answer_key" + Path(a.answer_key).suffix.lower())
+        if Path(a.answer_key).resolve() != key_src.resolve():
+            shutil.copy2(a.answer_key, key_src)  # 正解一覧も原本と一緒に保管する
+        key = load_answer_key(key_src)
+        print(f"      正解一覧: {len(key)}問分")
+    parsed = parse_file(pj, out / "parsed.json", chapter_pages=chapter_pages, answer_key=key)
     if a.ai:
         from .ai_assist import assist_parsed
         parsed = assist_parsed(out / "pages.json", out / "parsed.json")
@@ -149,6 +162,9 @@ def main(argv=None) -> int:
     c.add_argument("--ocr-lang", default="jpn")
     c.add_argument("--force-ocr", action="store_true", help="全ページをOCRする")
     c.add_argument("--ai", action="store_true", help="ルールで分割できなかった部分を生成AIで補助する")
+    c.add_argument("--chapter-pages", help="各章が始まるPDFのページ（例 1,29,41）。章の見出しが読めない本で、章ごとに問題番号が戻るとき")
+    c.add_argument("--answer-key", help="別紙の正解一覧（PDFまたはテキスト。「第1章 第1問 ②」の並び）。解答ページが読めないとき")
+    c.add_argument("--reuse-pages", action="store_true", help="同じPDFなら前回のOCR結果を使い、抽出を飛ばす（解析だけやり直すとき）")
     c.set_defaults(func=cmd_convert)
     v = sub.add_parser("validate", help="book.json を再検証してレポートを更新")
     v.add_argument("book_id")
@@ -178,7 +194,7 @@ def main(argv=None) -> int:
         return 2
     try:
         return a.func(a)
-    except (ExtractError, FileNotFoundError) as e:
+    except (ExtractError, AnswerKeyError, FileNotFoundError) as e:
         print(f"エラー: {e}", file=sys.stderr)
         return 2
 

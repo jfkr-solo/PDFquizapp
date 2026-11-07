@@ -90,6 +90,7 @@
             "page": {"type": "integer", "minimum": 1},
             "question_number": {"type": "integer", "minimum": 1},
             "answer_page": {"type": ["integer", "null"], "minimum": 1},
+            "answer_source": {"enum": ["answer_page", "answer_key"]},
             "raw_text": {"type": "string"},
             "extraction": {"enum": ["text", "ocr", "ai_assisted", "manual"]}
           }

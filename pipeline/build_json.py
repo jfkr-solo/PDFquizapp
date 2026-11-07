@@ -3,7 +3,7 @@
 入力 : parsed.json（STEP 3）、原本PDF（図の切り出し用）、書籍設定
 出力 : book.json
 
-- 問題IDは <book_id>-Q0001 形式。
+- 問題IDは <book_id>-Q0001 形式。--chapter-pages を使った本は 章×1000＋問番号（第2章第5問 → Q2005）。
 - 正解は原本の記号を A,B,C… に変換するだけで、内容は変えない。
 - 図表を参照する問題で画像が無い場合、問題の範囲をページから切り出して添付し「要確認」にする。
 - 読み上げ用の audio_text（問題＋選択肢）と audio_answer_text（正解＋解説）を作る。
@@ -106,7 +106,8 @@ def build_book(parsed: dict, *, book_id: str, title: str, version: str = "1.0",
     questions = []
     pq = parsed["questions"]
     for i, q in enumerate(pq):
-        qid = f"{book_id}-Q{i + 1:04d}"
+        # 章ごとに番号を振る本（--chapter-pages）は「章×1000＋問番号」にして、取りこぼしが後で見つかってもIDがずれないようにする
+        qid = f"{book_id}-Q{q['chapter_no'] * 1000 + q['number']:04d}" if q.get("chapter_no") else f"{book_id}-Q{i + 1:04d}"
         issues = list(q["issues"])
         qtype = _question_type(q)
         options = [{"id": o["id"], "label": o["label"], "text": o["text"]} for o in q["options"]]
@@ -155,6 +156,7 @@ def build_book(parsed: dict, *, book_id: str, title: str, version: str = "1.0",
                 "page": q["page"],
                 "question_number": q["number"],
                 "answer_page": q["answer_page"],
+                "answer_source": q.get("answer_source", "answer_page"),
                 "raw_text": "\n".join(q["raw_lines"]),
                 "extraction": "ai_assisted" if q.get("ai") else "ocr" if q["ocr"] else "text",
             },

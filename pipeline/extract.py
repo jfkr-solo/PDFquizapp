@@ -164,6 +164,7 @@ def _dark_boxes(gray, *, block: int = 10, dark: int = 110, solid: float = 0.55,
 
 
 Box = tuple[float, float, float, float]
+_LABEL_Q = re.compile(r"^第(\d{1,3})[問回間]")
 
 
 def _inverted_labels(page: "pymupdf.Page", ocr_lang: str, tessdata: str, dpi: int = 300) -> list[tuple[Line, Box]]:
@@ -177,7 +178,10 @@ def _inverted_labels(page: "pymupdf.Page", ocr_lang: str, tessdata: str, dpi: in
     env = {**os.environ, "TESSDATA_PREFIX": tessdata}
     with tempfile.TemporaryDirectory() as td:
         for k, (x0, y0, x1, y1) in enumerate(_dark_boxes(gray)):
-            crop = np.ascontiguousarray(255 - gray[y0:y1, x0:x1])
+            # 反転→二値化し、黒地の縁（反転すると黒い枠になる）を削って余白を付けると認識が安定する
+            inv = 255 - gray[y0:y1, x0:x1]
+            bw = np.where(inv < 128, 0, 255).astype(np.uint8)[10:-10, 10:-10]
+            crop = np.ascontiguousarray(np.pad(bw, 40, constant_values=255))
             img = Path(td) / f"box{k}.png"
             pymupdf.Pixmap(pymupdf.csGRAY, crop.shape[1], crop.shape[0], crop.tobytes(), False).save(img)
             r = subprocess.run(["tesseract", str(img), "-", "-l", ocr_lang, "--psm", "6", "tsv"],
@@ -190,10 +194,14 @@ def _inverted_labels(page: "pymupdf.Page", ocr_lang: str, tessdata: str, dpi: in
             if not words:
                 continue
             text = _CJK_SPACE.sub("", " ".join(wd[4] for wd in words)).replace(" ", "")
-            wx0 = min(wd[0] for wd in words) + x0
-            wy0 = min(wd[1] for wd in words) + y0
-            wx1 = max(wd[0] + wd[2] for wd in words) + x0
-            wy1 = max(wd[1] + wd[3] for wd in words) + y0
+            m = _LABEL_Q.match(text)
+            if m:
+                text = f"第{m.group(1)}問"  # 「問」を「回」「間」と読み違えやすい。後ろのゴミも落とす
+            off = 10 - 40  # 縁を削った分と余白の分
+            wx0 = min(wd[0] for wd in words) + x0 + off
+            wy0 = min(wd[1] for wd in words) + y0 + off
+            wx1 = max(wd[0] + wd[2] for wd in words) + x0 + off
+            wy1 = max(wd[1] + wd[3] for wd in words) + y0 + off
             line = Line(text, round(wx0 * scale, 1), round(wy0 * scale, 1), round(wx1 * scale, 1), round(wy1 * scale, 1))
             out.append((line, (x0 * scale, y0 * scale, x1 * scale, y1 * scale)))
     return out
