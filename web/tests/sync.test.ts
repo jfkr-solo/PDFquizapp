@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fromRow, mergeLogs, newerSession, toRow } from "@/lib/sync";
+import { fromRow, mergeLogs, newerSession, sendErrorMessage, toRow } from "@/lib/sync";
 import type { AnswerLog, Session } from "@/lib/types";
 
 const log = (id: string, at: string, over: Partial<AnswerLog> = {}): AnswerLog =>
@@ -32,5 +32,14 @@ describe("newerSession", () => {
     expect(newerSession(s("a", "2026-11-02"), s("b", "2026-11-03"))!.id).toBe("b");
     expect(newerSession(null, s("b", "2026-11-03"))!.id).toBe("b");
     expect(newerSession(s("a", "2026-11-04"), s("b", "2026-11-03"))!.id).toBe("a");
+  });
+});
+
+describe("sendErrorMessage", () => {
+  it("問題集が未登録（外部キー違反）なら publish を案内する", () => {
+    expect(sendErrorMessage({ code: "23503", message: "violates foreign key constraint" })).toContain("まだクラウドに登録されていない");
+  });
+  it("それ以外は元のメッセージを添える", () => {
+    expect(sendErrorMessage({ code: "42501", message: "permission denied" })).toContain("permission denied");
   });
 });

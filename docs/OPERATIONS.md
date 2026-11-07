@@ -145,6 +145,8 @@ python -m pipeline.cli publish IT2026A
 | SQL Editor で `relation "books" already exists` | マイグレーションを2回実行した | 問題なし。1回目で作成済み |
 | ログインメールのリンクが localhost に飛ぶ | Site URL が開発用のまま | Supabase の URL Configuration を本番URLにする |
 | 他の端末に履歴が出ない | 未ログイン、または通信失敗 | 問題集ページの同期表示を確認。履歴は端末に残り、次回送信される |
+| 「まだクラウドに登録されていない」と出る | その問題集を Supabase に取り込んでいない | `python -m pipeline.cli publish <ID>` を実行する。履歴は端末に残り、取り込み後に送信される |
+| ログインメールが届かない、`email rate limit exceeded` | Supabase 標準のメール送信は1時間に2通まで | 1時間待つ。人数が増えたら Authentication の SMTP 設定で独自のメールサービスを使う |
 | アプリに問題集が出ない | sync-books の実行忘れ | `npm run sync-books` してからビルドし直す |
 
 ## セキュリティの約束
