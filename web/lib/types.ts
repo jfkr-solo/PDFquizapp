@@ -21,6 +21,7 @@ export interface Question {
   source: { page: number; question_number: number; answer_page?: number | null };
   audio_text: string;
   audio_answer_text?: string;
+  audio?: { question?: string; answer?: string; full?: string }; // STEP 9 で作るMP3（book.json からの相対パス）
   tags: string[];
   validation_status: ValidationStatus;
 }
@@ -31,6 +32,12 @@ export interface Book {
   version: string;
   exam_policy?: { allowed_statuses: ValidationStatus[] };
   questions: Question[];
+}
+
+export interface AudioManifest {
+  engine: string;
+  pause_seconds: number;
+  chapters: { chapter: string; file: string; questions: number }[];
 }
 
 export interface BookIndexEntry { book_id: string; book_title: string; version: string; question_count: number; ready_count: number }
