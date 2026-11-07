@@ -4,8 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
-const src = path.resolve(root, "..", "data", "books");
-const dst = path.join(root, "public", "books");
+// 通しテストでは PDFQUIZ_DATA / PDFQUIZ_PUBLIC_BOOKS で入出力先を差し替える
+const src = process.env.PDFQUIZ_DATA ? path.join(process.env.PDFQUIZ_DATA, "books") : path.resolve(root, "..", "data", "books");
+const dst = process.env.PDFQUIZ_PUBLIC_BOOKS || path.join(root, "public", "books");
 fs.mkdirSync(dst, { recursive: true });
 
 let copied = 0;

@@ -99,6 +99,32 @@ def make_scan_pdf(src: Path, path: Path, dpi: int = 200) -> None:
     out.save(path)
 
 
+def make_large_pdf(path: Path, n: int = 1000, chapters: int = 10) -> None:
+    """大量問題（既定1000問・10章）の問題集。性能と件数チェックの確認用。正解は i%4 で決まる。"""
+    labels = "アイウエ"
+    lines: list[tuple[str, int]] = []
+    per = n // chapters
+    for i in range(1, n + 1):
+        if (i - 1) % per == 0:
+            c = (i - 1) // per + 1
+            lines.append((f"第{c}章 分野{c}", 13))
+        lines.append((f"問{i} 次のうち、項目{i}に当てはまるものはどれか。", 11))
+        lines += [(f"{labels[k]} 選択肢{i}-{k + 1}", 11) for k in range(4)]
+    lines.append(("解答・解説", 14))
+    for i in range(1, n + 1):
+        lines.append((f"問{i} {labels[i % 4]}", 11))
+        lines.append((f"解説：項目{i}の説明。", 11))
+    doc = pymupdf.open()
+    page, y = None, 900.0
+    for text, size in lines:
+        if page is None or y > 800 or (text == "解答・解説"):
+            page, y = doc.new_page(width=595, height=842), 60.0
+        if text:
+            page.insert_text((60, y), text, fontsize=size, fontname=FONT)
+        y += size * 1.9
+    doc.save(path)
+
+
 def main(out_dir: str = "data/raw/SAMPLE01") -> None:
     d = Path(out_dir)
     d.mkdir(parents=True, exist_ok=True)

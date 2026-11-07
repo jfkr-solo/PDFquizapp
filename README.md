@@ -58,12 +58,14 @@ python -m pipeline.cli validate SAMPLE01S     # 再検証だけ行う
 
 ## テスト
 
+日々の運用（問題集の追加・確認・公開・困ったとき）は [docs/OPERATIONS.md](docs/OPERATIONS.md) にまとめています。
+
 ```bash
 python -m pytest -q
-# 19 passed
+# 24 passed
 ```
 
-テストは、テキストPDF・スキャンPDF（Tesseractが無ければ自動スキップ）・意図的に壊したデータの検出・確認済みの巻き戻り・章ごとの番号振り直し・1行の解答一覧・AI補助のガードを確認します。
+テストは、テキストPDF・スキャンPDF（Tesseractが無ければ自動スキップ）・意図的に壊したデータの検出・確認済みの巻き戻り・章ごとの番号振り直し・1行の解答一覧・AI補助のガード・Supabase取り込み・音声生成に加え、通しテスト（`tests/test_e2e.py`：実際のコマンドでPDFからアプリ用データまで、1000問の変換、エラー時のメッセージ）を確認します。
 
 ## 各工程の入出力
 
