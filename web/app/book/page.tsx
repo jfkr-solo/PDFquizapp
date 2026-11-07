@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { loadBook } from "@/lib/data";
+import { listenQueue, loadManifest } from "@/lib/audio";
+import { bookBase, loadBook } from "@/lib/data";
 import { accuracyBy, eligible, isReady, MODE_LABEL, pickQuestions, statsByQuestion } from "@/lib/quiz";
 import { localStore } from "@/lib/storage";
 import { syncBook, type SyncResult } from "@/lib/sync";
-import type { AnswerLog, Book, Mode, Session } from "@/lib/types";
+import type { AnswerLog, AudioManifest, Book, Mode, Session } from "@/lib/types";
 
 function pct(r: number) {
   return `${Math.round(r * 100)}%`;
@@ -26,10 +27,12 @@ function BookPage() {
   const [random, setRandom] = useState(false);
   const [includePending, setIncludePending] = useState(false);
   const [sync, setSync] = useState<SyncResult | null>(null);
+  const [manifest, setManifest] = useState<AudioManifest | null>(null);
 
   useEffect(() => {
     if (!id) return;
     loadBook(id).then(setBook).catch((e) => setError(String(e.message ?? e)));
+    loadManifest(id).then(setManifest);
     const refresh = () => {
       setLogs(localStore.logs(id));
       const s = localStore.session(id);
@@ -83,6 +86,15 @@ function BookPage() {
     if (mode === "normal" && includePending) p.set("pending", "1");
     router.push(`/play/?${p}`);
   };
+
+  const listen = () => {
+    const p = new URLSearchParams({ book: id });
+    if (filters.chapter) p.set("chapter", filters.chapter);
+    if (filters.category) p.set("category", filters.category);
+    if (includePending) p.set("pending", "1");
+    router.push(`/listen/?${p}`);
+  };
+  const audioCount = listenQueue(book, { ...filters, includePending }).length;
 
   return (
     <>
@@ -168,6 +180,23 @@ function BookPage() {
           <div className="muted">解いた {reviewCount}問を前回不正解から</div>
           <button className="btn block" style={{ marginTop: 8 }} disabled={!reviewCount} onClick={() => start("review")}>始める</button>
         </div>
+      </div>
+
+      <div className="card">
+        <div className="spread"><strong>音声学習</strong><span className="muted">{audioCount}問</span></div>
+        <div className="muted">問題 → 考える時間 → 正解・解説の順に読み上げます。通勤中や家事の合間に。</div>
+        <button className="btn block" style={{ marginTop: 8 }} disabled={!audioCount} onClick={listen}>聞く</button>
+        {manifest && manifest.chapters.length > 0 && (
+          <details style={{ marginTop: 8 }}>
+            <summary>章ごとの音声（MP3）</summary>
+            <ul>
+              {manifest.chapters.map((c) => (
+                <li key={c.file}><a href={`${bookBase(id)}/${c.file}`} download>{c.chapter}（{c.questions}問）</a></li>
+              ))}
+            </ul>
+            <div className="muted">考える時間 {manifest.pause_seconds}秒入り。ダウンロードして音楽アプリで聞けます。</div>
+          </details>
+        )}
       </div>
 
       <h2>学習の記録</h2>

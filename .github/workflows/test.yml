@@ -12,7 +12,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Tesseract (Japanese)
-        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-jpn
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-jpn ffmpeg
       - run: pip install -r requirements.txt
       - run: python -m pytest -q
   web:

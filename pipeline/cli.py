@@ -121,6 +121,21 @@ def cmd_publish(a) -> int:
     return 0
 
 
+def cmd_audio(a) -> int:
+    from .audio import build_audio
+    from .tts import TTSError, get_engine
+    try:
+        engine = get_engine(a.engine, a.voice, a.speed)
+        r = build_audio(book_dir(a.book_id) / "book.json", engine, pause=a.pause,
+                        include_pending=a.include_pending, chapters=not a.no_chapters)
+    except TTSError as e:
+        print(f"エラー: {e}", file=sys.stderr)
+        return 2
+    print(f"音声を作りました: {r['questions']}問（読み上げ対象外 {r['skipped']}問）/ 章ごと {r['chapters']}本")
+    print(f"      新規合成 {r['synthesized']}件 / キャッシュ利用 {r['cached']}件 → {r['dir']}")
+    return 0
+
+
 def main(argv=None) -> int:
     load_dotenv()
     p = argparse.ArgumentParser(prog="pipeline", description="PDF問題集 → 教材JSON 変換")
@@ -148,6 +163,15 @@ def main(argv=None) -> int:
     pb = sub.add_parser("publish", help="book.json をSupabaseに取り込む（STEP 8）")
     pb.add_argument("book_id")
     pb.set_defaults(func=cmd_publish)
+    au = sub.add_parser("audio", help="問題ごと・章ごとのMP3を作る（STEP 9）")
+    au.add_argument("book_id")
+    au.add_argument("--engine", default=None, help="voicevox（ローカル）/ google（クラウド）/ dummy（テスト）。既定は環境変数 TTS_ENGINE")
+    au.add_argument("--voice", default=None, help="VOICEVOXは話者ID、Googleは音声名（例 ja-JP-Neural2-B）")
+    au.add_argument("--speed", type=float, default=1.0, help="読み上げ速度 0.5〜2.0")
+    au.add_argument("--pause", type=float, default=5.0, help="問題と正解の間の考える時間（秒）")
+    au.add_argument("--include-pending", action="store_true", help="要確認の問題も読み上げる（正解が未照合）")
+    au.add_argument("--no-chapters", action="store_true", help="章ごとのMP3を作らない")
+    au.set_defaults(func=cmd_audio)
     a = p.parse_args(argv)
     try:
         return a.func(a)

@@ -1,4 +1,4 @@
-// パイプラインの出力（../data/books/<id>/book.json と images/）をアプリの public/books/ にコピーし、
+// パイプラインの出力（../data/books/<id>/book.json と images/、audio/）をアプリの public/books/ にコピーし、
 // 一覧 public/books/index.json を作り直す。  使い方: npm run sync-books
 import fs from "node:fs";
 import path from "node:path";
@@ -19,6 +19,8 @@ if (fs.existsSync(src)) {
     fs.copyFileSync(book, path.join(out, "book.json"));
     const img = path.join(src, id, "images");
     if (fs.existsSync(img)) fs.cpSync(img, path.join(out, "images"), { recursive: true });
+    const audio = path.join(src, id, "audio"); // STEP 9 の音声（キャッシュ .cache は除く）
+    if (fs.existsSync(audio)) fs.cpSync(audio, path.join(out, "audio"), { recursive: true, filter: (f) => !f.includes(`${path.sep}.cache`) });
     copied++;
   }
 }

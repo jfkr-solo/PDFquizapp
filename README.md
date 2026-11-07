@@ -60,7 +60,7 @@ python -m pipeline.cli validate SAMPLE01S     # 再検証だけ行う
 
 ```bash
 python -m pytest -q
-# 11 passed
+# 19 passed
 ```
 
 テストは、テキストPDF・スキャンPDF（Tesseractが無ければ自動スキップ）・意図的に壊したデータの検出・確認済みの巻き戻り・章ごとの番号振り直し・1行の解答一覧・AI補助のガードを確認します。
@@ -131,3 +131,51 @@ npm run build        # out/ に静的ファイルを書き出す（Vercel等に�
 - `supabase/migrations/`：テーブル・RLS（本人の履歴だけ読める）・集計トリガー・正答率ビュー
 - `python -m pipeline.cli publish <book_id>`：検証済みの book.json を取り込み、元JSONを非公開バケットにバックアップ
 - アプリ：`NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_ANON_KEY` を設定すると、メールのリンクでログインできるようになります。履歴はまず端末に保存し、ログイン中は自動で同期します（未設定ならこれまでどおり端末内のみ）
+
+## STEP 9：音声教材
+
+`ffmpeg` が必要です（macOS: `brew install ffmpeg` / Ubuntu: `sudo apt install ffmpeg` / Windows: `winget install ffmpeg`）。
+
+### 音声エンジン
+
+| エンジン | 種類 | 準備 |
+| --- | --- | --- |
+| `voicevox`（既定） | ローカル・無料 | VOICEVOXアプリを起動、または `docker run --rm -p 50021:50021 voicevox/voicevox_engine:cpu-latest`。話者は `VOICEVOX_SPEAKER`（既定 3）。配布時は各キャラクターの規約に従いクレジットを表記 |
+| `google` | クラウド・文字数課金 | Google Cloud で Text-to-Speech API を有効にし、APIキーを `.env` の `GOOGLE_TTS_API_KEY` に設定 |
+| `dummy` | テスト用 | 不要（文字数に応じた長さのビープ音） |
+
+### 作り方
+
+```bash
+python -m pipeline.cli audio SAMPLE01 --engine dummy --pause 5
+# 音声を作りました: 6問（読み上げ対象外 0問）/ 章ごと 2本
+#       新規合成 14件 / キャッシュ利用 0件 → data/books/SAMPLE01/audio
+python -m pipeline.cli audio SAMPLE01 --engine dummy     # 2回目はキャッシュを使う（新規合成 0件）
+cd web && npm run sync-books                             # アプリに音声もコピー
+```
+
+| オプション | 意味 |
+| --- | --- |
+| `--engine` | `voicevox` / `google` / `dummy`（省略時は `TTS_ENGINE`） |
+| `--voice` | VOICEVOXの話者ID、またはGoogleの音声名 |
+| `--speed` | 読み上げ速度 0.5〜2.0（MP3自体の速さ。アプリ側でも再生速度を変えられる） |
+| `--pause` | 問題と正解の間の考える時間（秒、既定5） |
+| `--include-pending` | 要確認の問題も読み上げる（正解が原本と未照合なので通常は使わない） |
+| `--no-chapters` | 章ごとのMP3を作らない |
+
+出力は `data/books/<book_id>/audio/` です。
+
+- `<問題ID>_q.mp3`（問題と選択肢）、`<問題ID>_a.mp3`（正解と解説）、`<問題ID>.mp3`（問題→考える時間→正解）
+- `chapter_01.mp3` …（章の見出しと全問を1本に。ダウンロードして聞き流す用）
+- `manifest.json`（問題IDと音声の対応）。`book.json` の各問題にも `audio` が入る
+
+読み上げるのは出題できる問題（`verified` / `auto_ok`）だけです。同じ文章と同じ設定の音声は `audio/.cache/` を再利用するので、解説を1問直して作り直しても合成し直すのはその問題だけです。
+
+### アプリの音声学習モード
+
+問題集ページの「音声学習 → 聞く」で、問題 → 考える時間 → 正解・解説を順に流します。
+
+- 再生速度（0.75〜2倍）と考える時間（なし〜10秒）を変えられ、端末に保存されます。
+- MP3が無い問題は、端末の読み上げ機能（Web Speech API、日本語）で読みます。音声を作る前でも使えます。
+- 音声学習では解答の記録はしません。
+- 画面を消すとブラウザの読み上げは止まることがあります。聞き流すときは「章ごとの音声（MP3）」をダウンロードしてください。
