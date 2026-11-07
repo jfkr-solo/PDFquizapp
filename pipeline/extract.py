@@ -7,6 +7,8 @@
 - 文字数が閾値未満のページはスキャンと判定し、Tesseract OCR（PyMuPDF経由）を使う。
 - 2段組はブロックの左右位置から段を判定し、左段→右段の順に並べる。
 - 画像は座標付きで保存し、後工程で問題に紐付ける。
+- 黒地に白抜き文字の見出し（「第1問」のラベルなど）は通常のOCRでは読めないため、
+  白黒を反転して切り出し、別に読み取る（_inverted_labels）。
 """
 from __future__ import annotations
 
@@ -15,6 +17,8 @@ import re
 import json
 import os
 import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
@@ -111,6 +115,106 @@ _CJK = r"\u3000-\u30ff\u3400-\u9fff\uff00-\uffef"
 _CJK_SPACE = re.compile(rf"(?<=[{_CJK}])\s+(?=[{_CJK}A-Za-z0-9])|(?<=[A-Za-z0-9])\s+(?=[{_CJK}])")
 
 
+def _dark_boxes(gray, *, block: int = 10, dark: int = 110, solid: float = 0.55,
+                min_w: int = 16, min_h: int = 4, fill: float = 0.7, margin: float = 0.05) -> list[tuple[int, int, int, int]]:
+    """黒く塗りつぶされた四角形（白抜き文字の地）を探し、(x0, y0, x1, y1) のピクセル座標で返す。
+
+    10px角のブロック単位で「ほぼ黒」を判定し、細い罫線は収縮→膨張で取り除いてから塊を拾う。
+    ページ端（左右5%）にかかる章見出しのツメ（幅が狭い）は、問題の途中で章が切り替わったと誤認しないよう除く。
+    """
+    import numpy as np
+    from collections import deque
+
+    h, w = gray.shape
+    H, W = h // block, w // block
+    g = (gray[:H * block, :W * block] < dark).reshape(H, block, W, block).mean(axis=(1, 3)) > solid
+
+    def morph(m, r, op):
+        p = np.pad(m, r, constant_values=False)
+        acc = None
+        for dy in range(2 * r + 1):
+            for dx in range(2 * r + 1):
+                v = p[dy:dy + m.shape[0], dx:dx + m.shape[1]]
+                acc = v if acc is None else op(acc, v)
+        return acc
+
+    g = morph(morph(g, 2, np.logical_and), 2, np.logical_or)
+    seen = np.zeros_like(g)
+    boxes = []
+    for y, x in zip(*np.nonzero(g)):
+        if seen[y, x]:
+            continue
+        q = deque([(y, x)])
+        seen[y, x] = True
+        cells = []
+        while q:
+            cy, cx = q.popleft()
+            cells.append((cy, cx))
+            for ny, nx in ((cy + 1, cx), (cy - 1, cx), (cy, cx + 1), (cy, cx - 1)):
+                if 0 <= ny < H and 0 <= nx < W and g[ny, nx] and not seen[ny, nx]:
+                    seen[ny, nx] = True
+                    q.append((ny, nx))
+        ys = [c[0] for c in cells]
+        xs = [c[1] for c in cells]
+        bh, bw = max(ys) - min(ys) + 1, max(xs) - min(xs) + 1
+        x0, x1 = min(xs) * block, (max(xs) + 1) * block
+        if bw >= min_w and bh >= min_h and len(cells) / (bw * bh) >= fill and x0 >= w * margin and x1 <= w * (1 - margin):
+            boxes.append((x0, min(ys) * block, x1, (max(ys) + 1) * block))
+    return boxes
+
+
+Box = tuple[float, float, float, float]
+
+
+def _inverted_labels(page: "pymupdf.Page", ocr_lang: str, tessdata: str, dpi: int = 300) -> list[tuple[Line, Box]]:
+    """白抜き文字を反転してTesseractで読み、(読み取った行, 黒地の範囲) をページ座標（pt）で返す。"""
+    import numpy as np
+
+    pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
+    gray = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.stride)[:, :pix.width]
+    scale = 72 / dpi
+    out: list[tuple[Line, Box]] = []
+    env = {**os.environ, "TESSDATA_PREFIX": tessdata}
+    with tempfile.TemporaryDirectory() as td:
+        for k, (x0, y0, x1, y1) in enumerate(_dark_boxes(gray)):
+            crop = np.ascontiguousarray(255 - gray[y0:y1, x0:x1])
+            img = Path(td) / f"box{k}.png"
+            pymupdf.Pixmap(pymupdf.csGRAY, crop.shape[1], crop.shape[0], crop.tobytes(), False).save(img)
+            r = subprocess.run(["tesseract", str(img), "-", "-l", ocr_lang, "--psm", "6", "tsv"],
+                               capture_output=True, text=True, env=env, timeout=60)
+            words = []
+            for row in r.stdout.splitlines()[1:]:
+                c = row.split("\t")
+                if len(c) == 12 and c[11].strip() and float(c[10]) >= 0:
+                    words.append((int(c[6]), int(c[7]), int(c[8]), int(c[9]), c[11].strip()))
+            if not words:
+                continue
+            text = _CJK_SPACE.sub("", " ".join(wd[4] for wd in words)).replace(" ", "")
+            wx0 = min(wd[0] for wd in words) + x0
+            wy0 = min(wd[1] for wd in words) + y0
+            wx1 = max(wd[0] + wd[2] for wd in words) + x0
+            wy1 = max(wd[1] + wd[3] for wd in words) + y0
+            line = Line(text, round(wx0 * scale, 1), round(wy0 * scale, 1), round(wx1 * scale, 1), round(wy1 * scale, 1))
+            out.append((line, (x0 * scale, y0 * scale, x1 * scale, y1 * scale)))
+    return out
+
+
+def _apply_labels(d: dict, labels: list[tuple[Line, Box]]) -> list[Line]:
+    """白抜き部分の読み違い（OCRのゴミ）を get_text("dict") の結果から除き、読み直したラベルの行を返す。
+
+    ラベルは黒地の上端に置く。こうすると同じ黒地の横にある問題文より必ず先に並び、
+    問題文の1行目が前の問題に混ざらない。
+    """
+    def inside(bb, box) -> bool:
+        cx, cy = (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
+        return box[0] <= cx <= box[2] and box[1] <= cy <= box[3]
+    boxes = [box for _, box in labels]
+    for b in d.get("blocks", []):
+        for ln in b.get("lines", []):
+            ln["spans"] = [sp for sp in ln.get("spans", []) if not any(inside(sp["bbox"], bx) for bx in boxes)]
+    return [Line(lb.text, lb.x0, round(box[1], 1), lb.x1, round(box[1] + 1, 1)) for lb, box in labels]
+
+
 def _merge_rows(lines: list[Line], page_width: float) -> list[Line]:
     """OCRで細切れになった同じ行の断片を1行にまとめる（段組は左右で分けて処理）。"""
     if not lines:
@@ -194,7 +298,13 @@ def extract_pdf(pdf_path: str | Path, out_dir: str | Path, *, ocr_lang: str = "j
                     res.warnings.append("テキストが少ないためOCRが必要ですが、Tesseractが見つかりません")
                 else:
                     tp = page.get_textpage_ocr(language=ocr_lang, dpi=ocr_dpi, full=True, tessdata=tessdata)
-                    res.lines = _merge_rows(_lines_from_dict(page.get_text("dict", textpage=tp), w), w)
+                    d = page.get_text("dict", textpage=tp)
+                    labels: list[Line] = []
+                    try:
+                        labels = _apply_labels(d, _inverted_labels(page, ocr_lang, tessdata, ocr_dpi))
+                    except Exception as e:  # 白抜き文字の読み取りに失敗しても本文のOCR結果は使う
+                        res.warnings.append(f"白抜き文字を読み取れませんでした: {type(e).__name__}: {e}")
+                    res.lines = _merge_rows(_lines_from_dict(d, w) + labels, w)
                     res.method = "ocr"
             if not res.lines:
                 res.method = "empty" if res.method == "text" else res.method

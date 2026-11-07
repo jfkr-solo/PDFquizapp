@@ -197,3 +197,29 @@ def test_ai_assist_drops_text_not_in_source():
     item = validate_book(book, book_dir=".", pages_json=pj2)["book"]["questions"][0]
     assert item["correct_answers"] == ["B"]          # 正解は原本の解答ページ由来
     assert item["validation_status"] == "pending" and "AI_ASSISTED" in codes(item)
+
+
+def test_option_order_beyond_family_does_not_crash():
+    """OCRで選択肢の記号が崩れ、8個を超える番号が来ても止まらずに要確認として残す。"""
+    from pipeline.parse import parse_questions
+    rows = [{"text": t, "page": 1, "y": i, "ocr": True, "ai": False} for i, t in enumerate(
+        ["問1 次のうち正しいものはどれか。"] + [f"{m} 選択肢" for m in "①②③④⑤⑥⑦⑧"] + ["③ 崩れた行", "① もう一度"])]
+    q = parse_questions(rows)[0]
+    assert [o.label for o in q.options[:8]] == list("①②③④⑤⑥⑦⑧")
+    assert any(i["code"] == "OPTION_ORDER" for i in q.issues)
+
+
+def test_inverted_label_boxes_are_found():
+    """黒地に白抜きの「第1問」ラベルは拾い、罫線とページ端の章ツメは拾わない。"""
+    np = pytest.importorskip("numpy")
+    from pipeline.extract import _dark_boxes
+    g = np.full((1200, 1000), 255, dtype=np.uint8)
+    g[100:220, 200:500] = 30           # 問題番号ラベルの黒地
+    for x in range(260, 440, 12):
+        g[130:180, x:x + 3] = 255      # その中の白抜き文字（細い線）
+    g[100:1100, 195:200] = 30          # ラベルにつながる細い罫線
+    g[300:500, 0:40] = 30              # 左端の章ツメ
+    boxes = _dark_boxes(g)
+    assert len(boxes) == 1
+    x0, y0, x1, y1 = boxes[0]
+    assert 190 <= x0 <= 210 and 90 <= y0 <= 110 and 490 <= x1 <= 510 and 210 <= y1 <= 230

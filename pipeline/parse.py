@@ -252,6 +252,11 @@ def parse_answers(rows: list[dict]) -> tuple[list[ParsedAnswer], list[dict]]:
     return answers, stray
 
 
+def _label(fam: str, i: int) -> str:
+    """記号ファミリーのi番目（範囲外なら '?'）。選択肢が9個以上ある・順番が崩れたOCR結果でも止まらないようにする。"""
+    return FAMILIES[fam][i] if 0 <= i < len(FAMILIES[fam]) else "?"
+
+
 # ---------- 問題 ----------
 def parse_questions(rows: list[dict]) -> list[ParsedQuestion]:
     qs: list[ParsedQuestion] = []
@@ -312,7 +317,7 @@ def parse_questions(rows: list[dict]) -> list[ParsedQuestion]:
                 continue
             if mode == "options" and idx != expected:
                 cur.issues.append(_issue("OPTION_ORDER", "error",
-                                         f"選択肢の順番が飛んでいます（期待: {FAMILIES[fam][expected] if expected >= 0 else '?'}、実際: {FAMILIES[fam][idx]}）"))
+                                         f"選択肢の順番が飛んでいます（期待: {_label(fam, expected)}、実際: {_label(fam, idx)}）"))
                 cur.options.append(Option(chr(ord("A") + idx), FAMILIES[fam][idx], t[mk[2]:].strip()))
                 continue
         if mode == "options" and cur.options:
