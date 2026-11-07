@@ -25,7 +25,7 @@ from .parse import parse_file
 from .validate import validate_file
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
+DATA = Path(os.environ.get("PDFQUIZ_DATA") or ROOT / "data")  # テストでは一時フォルダに差し替える
 
 
 def load_dotenv(path: Path = ROOT / ".env") -> None:
@@ -173,6 +173,9 @@ def main(argv=None) -> int:
     au.add_argument("--no-chapters", action="store_true", help="章ごとのMP3を作らない")
     au.set_defaults(func=cmd_audio)
     a = p.parse_args(argv)
+    if a.cmd != "convert" and not (book_dir(a.book_id) / "book.json").exists():
+        print(f"エラー: 問題集 {a.book_id} が見つかりません（{book_dir(a.book_id)}）。先に convert を実行してください。", file=sys.stderr)
+        return 2
     try:
         return a.func(a)
     except (ExtractError, FileNotFoundError) as e:
