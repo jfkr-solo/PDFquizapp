@@ -182,8 +182,13 @@ def cmd_publish(a) -> int:
     from .supabase_import import PublishError, publish_book, publish_sql
     try:
         if a.sql:
-            Path(a.sql).write_text(publish_sql(book_dir(a.book_id) / "book.json"), encoding="utf-8")
-            print(f"SQLを書き出しました: {a.sql}（Supabase の SQL Editor に貼って実行してください）")
+            parts = publish_sql(book_dir(a.book_id) / "book.json")
+            base = Path(a.sql)
+            names = [base] if len(parts) == 1 else [base.with_name(f"{base.stem}_{k}of{len(parts)}{base.suffix or '.sql'}") for k in range(1, len(parts) + 1)]
+            for n, s in zip(names, parts):
+                n.write_text(s, encoding="utf-8")
+            print(f"SQLを{len(parts)}本書き出しました: {', '.join(str(n) for n in names)}")
+            print("      Supabase の SQL Editor に、番号順に1本ずつ貼って実行してください")
             return 0
         r = publish_book(book_dir(a.book_id) / "book.json")
     except PublishError as e:

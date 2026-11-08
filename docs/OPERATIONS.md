@@ -117,6 +117,7 @@ service_role キーを手元に置かずに取り込む場合は、SQL を書き
 
 ```bash
 python -m pipeline.cli publish IT2026A --sql publish_IT2026A.sql
+# 大きい問題集は SQL Editor の上限（約1MB）に収まるよう publish_IT2026A_1of3.sql … に分かれる。番号順に実行する
 ```
 
 ## 7. 問題集を改訂するとき
