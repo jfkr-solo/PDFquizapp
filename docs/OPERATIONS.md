@@ -38,6 +38,20 @@ python -m pipeline.cli convert ~/Downloads/問題集.pdf --book-id IT2026A --tit
 - 解説も原本から書き起こした場合は `data/raw/<ID>/explanations.jsonl` に1行1問で書けば、convert のたびに同じ章・番号の問題の解説として使います（例: `{"chapter":1,"number":30,"pdf_page":155,"explanation":"① 適切である。…\n② …"}`）。
 - ルールで問題を見つけられないページがある場合だけ `--ai` を付けます。`.env` の `ANTHROPIC_API_KEY` が必要です。AIが整形した問題は必ず要確認になります。
 
+### PDFが無い問題集（独自に作った練習問題など）
+
+原本PDFが無く、問題を自分たちで作った場合は、1行1問のJSONLから問題集を作ります。
+
+```bash
+python -m pipeline.cli import 問題.jsonl --book-id AB730 --title "AB-730 練習問題集"
+```
+
+- 1行の形式: `{"chapter":"第1章 …","number":1,"category":"…","difficulty":2,"question":"…","options":["…","…","…","…"],"answers":["B"],"explanation":"正解はB。…"}`
+- 正解が2つ以上なら複数選択になります。問題IDは「章の出現順×1000＋number」です。
+- 照合する原本が無いため、すべて「要確認」（`AUTHORED`）になります。内容を確認して `verify` するまで出題されません。
+- JSONLを直して同じコマンドを実行し直すと、内容が変わっていない問題の確認結果は引き継がれ、変わった問題だけ要確認に戻ります。
+- 試験の本番問題（いわゆる過去問の流出・ダンプ）は規約と著作権に反するので使いません。公式の出題範囲をもとにした独自問題にします。
+
 ## 2. 検証レポートを確認する
 
 `data/books/IT2026A/validation_report.md` を開きます。冒頭の集計を見てください。

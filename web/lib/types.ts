@@ -30,6 +30,7 @@ export interface Book {
   book_id: string;
   book_title: string;
   version: string;
+  source_pdf?: { file: string; sha256: string; pages: number };  // 独自作成の問題集には無い
   exam_policy?: { allowed_statuses: ValidationStatus[] };
   questions: Question[];
 }

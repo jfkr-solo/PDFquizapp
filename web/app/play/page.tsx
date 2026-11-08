@@ -134,7 +134,7 @@ function Play() {
       <div className="progress" style={{ margin: "8px 0 16px" }}><div style={{ width: `${(session.cursor / total) * 100}%` }} /></div>
 
       <div className="muted">
-        {q.chapter} {q.category && `・${q.category}`}　問{q.source.question_number}（原本 p.{q.source.page}）
+        {q.chapter} {q.category && `・${q.category}`}　問{q.source.question_number}{book.source_pdf && `（原本 p.${q.source.page}）`}
         {q.validation_status === "pending" && <span className="badge warn" style={{ marginLeft: 8 }}>要確認</span>}
         {q.question_type === "multiple_choice" && <span className="badge" style={{ marginLeft: 8 }}>すべて選ぶ</span>}
       </div>
