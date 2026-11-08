@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import Account from "@/components/Account";
 import { loadIndex } from "@/lib/data";
+import { supabase } from "@/lib/supabase";
 import { localStore } from "@/lib/storage";
 import type { BookIndexEntry } from "@/lib/types";
 
@@ -12,7 +13,11 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadIndex().then(setBooks).catch((e) => setError(String(e.message ?? e)));
+    const load = () => loadIndex().then((b) => { setBooks(b); setError(null); }).catch((e) => setError(String(e.message ?? e)));
+    load();
+    // ログイン・ログアウトで、Supabase に置いた問題集が見える・見えないが変わる
+    const sub = supabase()?.auth.onAuthStateChange((e) => { if (e === "SIGNED_IN" || e === "SIGNED_OUT") load(); });
+    return () => sub?.data.subscription.unsubscribe();
   }, []);
 
   return (
@@ -23,7 +28,9 @@ export default function Home() {
       {!books && !error && <p className="muted">読み込み中…</p>}
       {books?.length === 0 && (
         <div className="card">
-          問題集がまだありません。パイプラインで変換したあと <code>npm run sync-books</code> を実行してください。
+          {supabase()
+            ? "問題集はログインすると表示されます。"
+            : <>問題集がまだありません。パイプラインで変換したあと <code>npm run sync-books</code> を実行してください。</>}
         </div>
       )}
       {books?.map((b) => {

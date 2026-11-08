@@ -96,6 +96,12 @@ npm run build           # out/ に静的サイトができる
 - ホスティング側の環境変数に `NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_ANON_KEY`（publishable キー）を設定してからビルドします。
 - 本番のURLが決まったら、Supabase の「Authentication」→「URL Configuration」で Site URL を本番URLにし、Redirect URLs に `http://localhost:3000` も残します。
 
+### 市販の問題集をサイトに同梱しない
+
+`public/books/` に置いた問題集は、URLを知っている人なら誰でも読めます。市販の問題集などは `sync-books` で同梱せず、次の「6. Supabase に取り込む」だけを行ってください。Supabase に置いた問題集は、ログイン中の人にだけ一覧に出て読めます（サイトに同じIDの問題集があればそちらが優先）。
+
+- 自分だけで使うなら、自分のアカウントでログインしたあと、Supabase の「Authentication」→「Sign In / Providers」で **Allow new users to sign up** をオフにして、ほかの人が登録できないようにします。
+
 ## 6. Supabase に取り込む
 
 ```bash
@@ -106,6 +112,12 @@ python -m pipeline.cli publish IT2026A
 - service_role キーは取り込み専用です。ブラウザ、Git、チャットには絶対に載せません。
 - JSON Schema エラーがある問題集は取り込まれません。
 - 同じ版は上書きされ、元の book.json は非公開バケット `book-json` にバックアップされます。
+
+service_role キーを手元に置かずに取り込む場合は、SQL を書き出して Supabase の「SQL Editor」に貼って実行します（Storage へのバックアップは行いません。何回実行しても同じ結果になり、版から無くなった問題は消えます）。
+
+```bash
+python -m pipeline.cli publish IT2026A --sql publish_IT2026A.sql
+```
 
 ## 7. 問題集を改訂するとき
 
