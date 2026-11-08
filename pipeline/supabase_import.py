@@ -98,9 +98,11 @@ def _dollar(s: str) -> str:
     return f"${tag}${s}${tag}$"
 
 
-def publish_sql(book_path: str | Path) -> str:
+def publish_sql(book_path: str | Path, max_bytes: int = 350_000) -> list[str]:
     """publish と同じ取り込みを、Supabase の SQL Editor に貼って実行するSQLにする。
-    service_role キーをこの環境に置かずに取り込むときに使う（Storage へのバックアップは行わない）。"""
+    service_role キーをこの環境に置かずに取り込むときに使う（Storage へのバックアップは行わない）。
+    SQL Editor は大きすぎるSQLを実行できないので、1つが max_bytes 程度になるよう問題を分けて、
+    番号順に実行する複数のSQLを返す。どれも何回実行しても同じ結果になる。"""
     from .validate import schema_errors
 
     book = json.loads(Path(book_path).read_text(encoding="utf-8"))
@@ -109,29 +111,47 @@ def publish_sql(book_path: str | Path) -> str:
         raise PublishError(f"JSON Schema エラーが{len(errs)}件あるため取り込みません。先に validate を実行して直してください。")
     bid, ver = book["book_id"], book["version"]
     sha = (book.get("source_pdf") or {}).get("sha256")
-    rows = json.dumps([question_row(book, q) for q in book["questions"]], ensure_ascii=False)
-    ids = json.dumps([q["id"] for q in book["questions"]])
-    return f"""-- 問題集 {bid} v{ver} を取り込む（publish と同じ内容）。何回実行しても大丈夫です。
-begin;
 
-insert into public.books (book_id, title, current_version) values ({_dollar(bid)}, {_dollar(book["book_title"])}, {_dollar(ver)})
+    # 問題を max_bytes 程度ずつに分ける
+    chunks: list[list[dict]] = [[]]
+    size = 0
+    for q in book["questions"]:
+        row = question_row(book, q)
+        n = len(json.dumps(row, ensure_ascii=False).encode())
+        if chunks[-1] and size + n > max_bytes:
+            chunks.append([])
+            size = 0
+        chunks[-1].append(row)
+        size += n
+
+    total = len(chunks)
+    head = f"""insert into public.books (book_id, title, current_version) values ({_dollar(bid)}, {_dollar(book["book_title"])}, {_dollar(ver)})
   on conflict (book_id) do update set title = excluded.title, current_version = excluded.current_version, updated_at = now();
 
 insert into public.book_versions (book_id, version, json_path, sha256, question_count)
   values ({_dollar(bid)}, {_dollar(ver)}, {_dollar(f"{bid}/{ver}.json")}, {_dollar(sha) if sha else "null"}, {len(book["questions"])})
   on conflict (book_id, version) do update set question_count = excluded.question_count;
-
-insert into public.questions (id, book_id, version, chapter, category, difficulty, question_type, validation_status, body)
-select r.id, r.book_id, r.version, r.chapter, r.category, r.difficulty, r.question_type, r.validation_status, r.body
-from jsonb_populate_recordset(null::public.questions, {_dollar(rows)}::jsonb) r
-on conflict (id) do update set version = excluded.version, body = excluded.body, validation_status = excluded.validation_status,
-  chapter = excluded.chapter, category = excluded.category, difficulty = excluded.difficulty, updated_at = now();
-
+"""
+    ids = json.dumps([q["id"] for q in book["questions"]])
+    tail = f"""
 -- この版に無くなった問題は消す
 delete from public.questions where book_id = {_dollar(bid)} and not (id = any (array(select jsonb_array_elements_text({_dollar(ids)}::jsonb))));
-
+"""
+    parts = []
+    for k, rows in enumerate(chunks, start=1):
+        body = json.dumps(rows, ensure_ascii=False)
+        parts.append(f"""-- 問題集 {bid} v{ver} の取り込み {k}/{total}（{len(rows)}問）。1から順に実行してください。何回実行しても大丈夫です。
+begin;
+{head if k == 1 else ""}
+insert into public.questions (id, book_id, version, chapter, category, difficulty, question_type, validation_status, body)
+select r.id, r.book_id, r.version, r.chapter, r.category, r.difficulty, r.question_type, r.validation_status, r.body
+from jsonb_populate_recordset(null::public.questions, {_dollar(body)}::jsonb) r
+on conflict (id) do update set version = excluded.version, body = excluded.body, validation_status = excluded.validation_status,
+  chapter = excluded.chapter, category = excluded.category, difficulty = excluded.difficulty, updated_at = now();
+{tail if k == total else ""}
 commit;
 
-select count(*) as questions, count(*) filter (where validation_status in ('verified', 'auto_ok')) as ready
+select '{k}/{total}' as part, count(*) as questions, count(*) filter (where validation_status in ('verified', 'auto_ok')) as ready
 from public.questions where book_id = {_dollar(bid)};
-"""
+""")
+    return parts

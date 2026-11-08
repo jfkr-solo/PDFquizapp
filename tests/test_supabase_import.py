@@ -57,15 +57,20 @@ def test_publish_refuses_schema_errors(book_file, monkeypatch):
 
 
 def test_publish_sql_writes_idempotent_import(book_file):
-    """service_role キーを使わずに SQL Editor で取り込むためのSQL。何回実行しても同じ結果になる形にする。"""
+    """service_role キーを使わずに SQL Editor で取り込むためのSQL。大きければ分け、どれも何回実行しても同じ結果になる形にする。"""
     from pipeline.supabase_import import publish_sql
     book = json.loads(book_file.read_text(encoding="utf-8"))
     book["questions"][0]["explanation"] = "区切り $j$ を含む解説"
     book_file.write_text(json.dumps(book, ensure_ascii=False), encoding="utf-8")
-    sql = publish_sql(book_file)
+    [sql] = publish_sql(book_file)
     assert "on conflict (book_id) do update" in sql and "on conflict (id) do update" in sql
     assert "delete from public.questions where book_id = $j$T01$j$" in sql
     assert "$jj$[" in sql  # 中身に $j$ があれば、別の区切りを使う
     rows = json.loads(sql.split("$jj$")[1])
     assert [r["id"] for r in rows] == [q["id"] for q in book["questions"]]
     assert "SERVICE_ROLE" not in sql.upper()
+
+    parts = publish_sql(book_file, max_bytes=1)  # 1問ずつに分かれる
+    assert len(parts) == len(book["questions"])
+    assert "insert into public.books" in parts[0] and all("insert into public.books" not in p for p in parts[1:])
+    assert "delete from public.questions" in parts[-1] and all("delete from" not in p for p in parts[:-1])
