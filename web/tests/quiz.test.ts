@@ -54,8 +54,9 @@ describe("pickQuestions", () => {
   it("弱点克服は間違えたことのある問題を正答率の低い順に", () => {
     expect(pickQuestions(pool, "weak", logs).map((x) => x.id)).toEqual(["Q2", "Q1"]);
   });
-  it("復習は前回不正解 → 古い順", () => {
-    expect(pickQuestions(pool, "review", logs).map((x) => x.id)).toEqual(["Q2", "Q5", "Q1"]);
+  it("復習は間違えた問題のうち予定日が来たものを予定日の古い順に", () => {
+    expect(pickQuestions(pool, "review", logs, { now: new Date("2026-11-10") }).map((x) => x.id)).toEqual(["Q2", "Q1"]);
+    expect(pickQuestions(pool, "review", logs, { now: new Date("2026-11-03T12:00:00Z") }).map((x) => x.id)).toEqual([]);
   });
   it("模擬試験は指定数をランダムに", () => {
     const r = pickQuestions(pool, "exam", [], { count: 2, rand: () => 0 });

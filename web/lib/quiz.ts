@@ -1,5 +1,6 @@
 // 出題・採点のロジック（画面から切り離してテストできるようにしている）
 import type { AnswerLog, Book, Mode, Question, ValidationStatus } from "./types";
+import { dueItems } from "./review";
 
 export const MODE_LABEL: Record<Mode, string> = {
   normal: "通常学習",
@@ -12,7 +13,7 @@ export interface Filters {
   chapter?: string;
   category?: string;
   difficulty?: number;
-  includePending?: boolean;   // 通常学習でのみ選べる。模擬試験では常に除外
+  includePending?: boolean;   // 練習（通常・弱点・復習）でのみ選べる。模擬試験では常に除外
 }
 
 /** 出題してよい問題か。原則 verified と auto_ok のみ（問題集の exam_policy に従う）。 */
@@ -24,7 +25,7 @@ export function isReady(book: Book, q: Question): boolean {
 export function eligible(book: Book, mode: Mode, f: Filters = {}): Question[] {
   return book.questions.filter((q) => {
     if (q.validation_status === "rejected") return false;
-    const pendingOk = mode === "normal" && f.includePending;
+    const pendingOk = mode !== "exam" && f.includePending;
     if (!isReady(book, q) && !pendingOk) return false;
     if (f.chapter && q.chapter !== f.chapter) return false;
     if (f.category && q.category !== f.category) return false;
@@ -59,7 +60,7 @@ export function statsByQuestion(logs: AnswerLog[]): Map<string, QuestionStat> {
   return m;
 }
 
-export interface PickOptions { count?: number; random?: boolean; rand?: () => number }
+export interface PickOptions { count?: number; random?: boolean; rand?: () => number; now?: Date }
 
 /** モードごとに出題する問題を選ぶ */
 export function pickQuestions(pool: Question[], mode: Mode, logs: AnswerLog[], o: PickOptions = {}): Question[] {
@@ -86,14 +87,9 @@ export function pickQuestions(pool: Question[], mode: Mode, logs: AnswerLog[], o
       break;
     }
     case "review": {
-      // 解いたことがある問題を、前回不正解 → 前回から時間が空いた順に
-      list = pool
-        .filter((q) => stats.has(q.id))
-        .sort((a, b) => {
-          const sa = stats.get(a.id)!, sb = stats.get(b.id)!;
-          if (sa.lastCorrect !== sb.lastCorrect) return sa.lastCorrect ? 1 : -1;
-          return (sa.lastAt ?? "").localeCompare(sb.lastAt ?? "");
-        });
+      // 忘却曲線の間隔で、復習の予定日が来た問題を予定日の古い順に（lib/review.ts）
+      const byId = new Map(pool.map((q) => [q.id, q]));
+      list = dueItems(logs, o.now).map((r) => byId.get(r.questionId)).filter((q): q is Question => !!q);
       break;
     }
     default:
