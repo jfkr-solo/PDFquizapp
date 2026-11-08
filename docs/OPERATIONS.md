@@ -35,6 +35,7 @@ python -m pipeline.cli convert ~/Downloads/問題集.pdf --book-id IT2026A --tit
 - 解析の条件だけ変えてやり直すときは `--reuse-pages` を付けると、OCRをやり直さずに済みます。
 - 読み取りが崩れた問題は、そのページを撮り直したPDFで差し替えられます：`python -m pipeline.cli supplement IT2026A 撮り直し.pdf`。前回と同じ条件で作り直し、章はページ上部の章名から自動で決めます（決められないときは `--chapter 7` を付けます）。撮り直したPDFは `data/raw/<ID>/supplements/` に保管されます。
 - 撮り直しでも読めない問題は、原本を見て書き起こしたものを `data/raw/<ID>/transcriptions.jsonl` に1行1問で書けば、convert のたびに同じ章・番号の問題と差し替えます（例: `{"chapter":4,"number":31,"pdf_page":75,"question":"…","options":["…","…","…","…"]}`）。正解は正解一覧から付き、原本との照合が必要なため要確認のままになります。正解一覧に無い章・番号の問題（ページの取り違え）は問題集から外し、全体の指摘に残します。
+- 解説も原本から書き起こした場合は `data/raw/<ID>/explanations.jsonl` に1行1問で書けば、convert のたびに同じ章・番号の問題の解説として使います（例: `{"chapter":1,"number":30,"pdf_page":155,"explanation":"① 適切である。…\n② …"}`）。
 - ルールで問題を見つけられないページがある場合だけ `--ai` を付けます。`.env` の `ANTHROPIC_API_KEY` が必要です。AIが整形した問題は必ず要確認になります。
 
 ## 2. 検証レポートを確認する

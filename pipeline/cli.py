@@ -22,7 +22,7 @@ from pathlib import Path
 from .build_json import build_file
 from .answer_key import AnswerKeyError, load_answer_key
 from .extract import ExtractError, extract_pdf, sha256_of, summarize
-from .parse import load_transcriptions, parse_file
+from .parse import load_explanations, load_transcriptions, parse_file
 from .validate import validate_file
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -84,8 +84,12 @@ def cmd_convert(a) -> int:
     trs = load_transcriptions(tr_path) if tr_path.exists() else None
     if trs:
         print(f"      書き起こし: {len(trs)}問")
+    ex_path = raw_dir / "explanations.jsonl"
+    exs = load_explanations(ex_path) if ex_path.exists() else None
+    if exs:
+        print(f"      解説の書き起こし: {len(exs)}問")
     parsed = parse_file(pj, out / "parsed.json", chapter_pages=chapter_pages, answer_key=key, supplements=sups,
-                        transcriptions=trs)
+                        transcriptions=trs, explanations=exs)
     if a.ai:
         from .ai_assist import assist_parsed
         parsed = assist_parsed(out / "pages.json", out / "parsed.json")
