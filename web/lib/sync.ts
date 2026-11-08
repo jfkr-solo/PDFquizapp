@@ -41,6 +41,15 @@ export function newerSession(a: Session | null, b: Session | null): Session | nu
   return (a.updatedAt ?? a.startedAt) >= (b.updatedAt ?? b.startedAt) ? a : b;
 }
 
+/** Supabaseのエラーを、利用者に分かる日本語にする */
+export function sendErrorMessage(error: { code?: string; message: string }): string {
+  if (error.code === "23503") {
+    // 外部キー違反＝問題集（books）がまだSupabaseに取り込まれていない
+    return "この問題集はまだクラウドに登録されていないため、履歴を送信できませんでした。publish で取り込むと次回送信します（履歴はこの端末に残っています）。";
+  }
+  return `履歴を送信できませんでした（${error.message}）。次回また送信します。`;
+}
+
 export type SyncResult = { state: "off" | "signed_out" | "ok" | "error"; message?: string };
 
 async function userId(c: SupabaseClient): Promise<string | null> {
@@ -56,7 +65,7 @@ export async function pushLogs(bookId: string): Promise<SyncResult> {
   const pending = logs.filter((l) => !l.synced);
   if (pending.length === 0) return { state: "ok" };
   const { error } = await c.from("answer_logs").upsert(pending.map(toRow), { onConflict: "id", ignoreDuplicates: true });
-  if (error) return { state: "error", message: `履歴を送信できませんでした（${error.message}）。次回また送信します。` };
+  if (error) return { state: "error", message: sendErrorMessage(error) };
   const sent = new Set(pending.map((l) => l.id));
   localStore.setLogs(bookId, localStore.logs(bookId).map((l) => (sent.has(l.id) ? { ...l, synced: true } : l)));
   return { state: "ok" };

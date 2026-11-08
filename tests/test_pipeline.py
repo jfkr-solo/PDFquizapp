@@ -197,3 +197,82 @@ def test_ai_assist_drops_text_not_in_source():
     item = validate_book(book, book_dir=".", pages_json=pj2)["book"]["questions"][0]
     assert item["correct_answers"] == ["B"]          # 正解は原本の解答ページ由来
     assert item["validation_status"] == "pending" and "AI_ASSISTED" in codes(item)
+
+
+def test_option_order_beyond_family_does_not_crash():
+    """OCRで選択肢の記号が崩れ、8個を超える番号が来ても止まらずに要確認として残す。"""
+    from pipeline.parse import parse_questions
+    rows = [{"text": t, "page": 1, "y": i, "ocr": True, "ai": False} for i, t in enumerate(
+        ["問1 次のうち正しいものはどれか。"] + [f"{m} 選択肢" for m in "①②③④⑤⑥⑦⑧"] + ["③ 崩れた行", "① もう一度"])]
+    q = parse_questions(rows)[0]
+    assert [o.label for o in q.options[:8]] == list("①②③④⑤⑥⑦⑧")
+    assert any(i["code"] == "OPTION_ORDER" for i in q.issues)
+
+
+def test_inverted_label_boxes_are_found():
+    """黒地に白抜きの「第1問」ラベルは拾い、罫線とページ端の章ツメは拾わない。"""
+    np = pytest.importorskip("numpy")
+    from pipeline.extract import _dark_boxes
+    g = np.full((1200, 1000), 255, dtype=np.uint8)
+    g[100:220, 200:500] = 30           # 問題番号ラベルの黒地
+    for x in range(260, 440, 12):
+        g[130:180, x:x + 3] = 255      # その中の白抜き文字（細い線）
+    g[100:1100, 195:200] = 30          # ラベルにつながる細い罫線
+    g[300:500, 0:40] = 30              # 左端の章ツメ
+    boxes = _dark_boxes(g)
+    assert len(boxes) == 1
+    x0, y0, x1, y1 = boxes[0]
+    assert 190 <= x0 <= 210 and 90 <= y0 <= 110 and 490 <= x1 <= 510 and 210 <= y1 <= 230
+
+
+def test_answer_key_and_chapter_pages():
+    """解答ページが読めない本：別紙の正解一覧と章の開始ページで正解を付け、見つからない問題を指摘する。"""
+    from pipeline.answer_key import parse_answer_key
+    key = parse_answer_key("解答\n第1章\n第1問\n②\n第1章\n第2問\n①\n第2章\n第1問\n③\n第2章\n第2問\n④")
+    assert key[("第2章", 1)] == ["③"]
+    pj = _pages(
+        ["第2問 二つ目", "① a", "② b"],                    # スキャンの順番が前後している
+        ["第1問 一つ目", "① a", "② b"],
+        ["第1問 二章の一つ目", "① a", "② b", "③ c"],
+    )
+    parsed = parse_pages(pj, chapter_pages=[1, 3], answer_key=key)
+    qs = parsed["questions"]
+    assert [(q["chapter"], q["number"], q["answer_tokens"]) for q in qs] == [
+        ("第1章", 1, ["②"]), ("第1章", 2, ["①"]), ("第2章", 1, ["③"])]
+    assert [i["message"] for i in parsed["issues"] if i["code"] == "QUESTION_NOT_FOUND"] == ["正解一覧にある 第2章第2問 が問題ページから見つかりません"]
+    book = build_book(parsed, book_id="T03", title="t")
+    assert [q["id"] for q in book["questions"]] == ["T03-Q1001", "T03-Q1002", "T03-Q2001"]
+    assert book["questions"][0]["source"]["answer_source"] == "answer_key"
+    assert book["questions"][0]["correct_answers"] == ["B"]
+
+
+def test_supplement_replaces_broken_question():
+    """撮り直したページの問題で、崩れた問題を差し替える。章はページ上部の章名から決める。"""
+    from pipeline.answer_key import parse_answer_key
+    key = parse_answer_key("第1章 第1問 ② 第2章 第1問 ①")
+    pj = _pages(["ストレスの基礎知識"], ["第1問 一つ目", "① a", "② b"],
+                ["職場環境の改善方法"], ["第1問 崩れた問題", "読めない行"])
+    sup = _pages(["職場環境の改善方法", "第1問 撮り直した問題", "① c", "② d"])
+    parsed = parse_pages(pj, chapter_pages=[1, 3], answer_key=key, supplements=[("01.pdf", sup, None)])
+    q = [q for q in parsed["questions"] if q["chapter"] == "第2章"][0]
+    assert [o["text"] for o in q["options"]] == ["c", "d"]
+    assert q["answer_tokens"] == ["①"] and q["page"] == 4
+    assert any(i["code"] == "FROM_RESCAN" for i in q["issues"])
+
+
+def test_transcription_replaces_question_and_drops_unknown():
+    """書き起こした問題で置き換え、正解一覧に無い番号（ページの取り違え）は問題集から外す。"""
+    from pipeline.answer_key import parse_answer_key
+    from pipeline.build_json import build_book
+    key = parse_answer_key("第1章 第1問 ② 第1章 第2問 ①")
+    pj = _pages(["第1問 崩れた問題", "読めない行"], ["第2問 二つ目", "① a", "② b"], ["第9問 迷い込んだ問題", "① x", "② y"])
+    tr = [{"chapter": 1, "number": 1, "pdf_page": 1, "question": "書き起こした問題\nA. 文", "options": ["(A)○", "(A)×"]}]
+    parsed = parse_pages(pj, chapter_pages=[1], answer_key=key, transcriptions=tr)
+    assert [(q["chapter"], q["number"]) for q in parsed["questions"]] == [("第1章", 1), ("第1章", 2)]
+    q = parsed["questions"][0]
+    assert q["question"] == "書き起こした問題\nA. 文" and q["answer_tokens"] == ["②"]
+    assert any(i["code"] == "MANUAL_TRANSCRIPTION" for i in q["issues"])
+    assert any(i["code"] == "NOT_IN_ANSWER_KEY" for i in parsed["issues"])
+    book = build_book(parsed, book_id="T", title="t", version="1")
+    b = book["questions"][0]
+    assert b["correct_answers"] == ["B"] and b["source"]["extraction"] == "manual" and b["validation_status"] == "pending"

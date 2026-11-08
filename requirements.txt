@@ -1,4 +1,5 @@
 pymupdf>=1.24
+numpy>=1.26  # スキャンPDFの白抜き文字の検出
 jsonschema>=4.21
 pytest>=8
 # 任意：AI補助を使う場合

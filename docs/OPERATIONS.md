@@ -30,6 +30,11 @@ python -m pipeline.cli convert ~/Downloads/問題集.pdf --book-id IT2026A --tit
 - 原本PDFは `data/raw/IT2026A/source.pdf` にコピーされます。元のファイルは動かしません。
 - 結果は `data/books/IT2026A/` にできます。
 - 1000問でも数十秒以内に終わります（スキャンPDFのOCRは1ページ数秒かかります）。
+- 章ごとに問題番号が1に戻る本で、章の見出しがうまく読めない場合は `--chapter-pages 1,29,41` のように各章が始まるPDFのページを指定します。問題IDは「章×1000＋問番号」（第2章第5問 → `-Q2005`）になります。
+- 解答ページの正解記号がOCRで読めない場合は、正解一覧（「第1章 第1問 ②」の並び。文字入りPDFかテキスト）を用意して `--answer-key 正解一覧.pdf` を付けます。正解は一覧から取り、一覧にあるのに見つからない問題はレポートに出ます。
+- 解析の条件だけ変えてやり直すときは `--reuse-pages` を付けると、OCRをやり直さずに済みます。
+- 読み取りが崩れた問題は、そのページを撮り直したPDFで差し替えられます：`python -m pipeline.cli supplement IT2026A 撮り直し.pdf`。前回と同じ条件で作り直し、章はページ上部の章名から自動で決めます（決められないときは `--chapter 7` を付けます）。撮り直したPDFは `data/raw/<ID>/supplements/` に保管されます。
+- 撮り直しでも読めない問題は、原本を見て書き起こしたものを `data/raw/<ID>/transcriptions.jsonl` に1行1問で書けば、convert のたびに同じ章・番号の問題と差し替えます（例: `{"chapter":4,"number":31,"pdf_page":75,"question":"…","options":["…","…","…","…"]}`）。正解は正解一覧から付き、原本との照合が必要なため要確認のままになります。正解一覧に無い章・番号の問題（ページの取り違え）は問題集から外し、全体の指摘に残します。
 - ルールで問題を見つけられないページがある場合だけ `--ai` を付けます。`.env` の `ANTHROPIC_API_KEY` が必要です。AIが整形した問題は必ず要確認になります。
 
 ## 2. 検証レポートを確認する
@@ -145,6 +150,8 @@ python -m pipeline.cli publish IT2026A
 | SQL Editor で `relation "books" already exists` | マイグレーションを2回実行した | 問題なし。1回目で作成済み |
 | ログインメールのリンクが localhost に飛ぶ | Site URL が開発用のまま | Supabase の URL Configuration を本番URLにする |
 | 他の端末に履歴が出ない | 未ログイン、または通信失敗 | 問題集ページの同期表示を確認。履歴は端末に残り、次回送信される |
+| 「まだクラウドに登録されていない」と出る | その問題集を Supabase に取り込んでいない | `python -m pipeline.cli publish <ID>` を実行する。履歴は端末に残り、取り込み後に送信される |
+| ログインメールが届かない、`email rate limit exceeded` | Supabase 標準のメール送信は1時間に2通まで | 1時間待つ。人数が増えたら Authentication の SMTP 設定で独自のメールサービスを使う |
 | アプリに問題集が出ない | sync-books の実行忘れ | `npm run sync-books` してからビルドし直す |
 
 ## セキュリティの約束
