@@ -36,6 +36,7 @@ INLINE_ANSWER = re.compile(r"^(?:正解|答え|解答)\s*[:]\s*(.+)$")
 EXPLANATION = re.compile(r"^解説\s*[:]?\s*(.*)$")
 OCR_LEAD_JUNK = re.compile(r"^[-ー_|'\"“”‘’:;.,\s]+(?=第\s*\d+\s*問)")  # OCRで問題番号の前に付く汚れ
 OCR_DIGIT_OPTION = re.compile(r"^\(?([1-8])(?:\)|\s|(?=[^\d.,年月日%:]))")  # 丸数字①を「1」「(1)」と読み違えたもの
+OCR_FIRST_OPTION = re.compile(r"^[|｜lI!]\s*(?=[^\s|｜])")
 PAGE_NUMBER = re.compile(r"^[-－—]?\s*\d{1,4}\s*[-－—]?$")
 
 # 選択肢の記号ファミリー（順番＝A,B,C…への対応）
@@ -330,7 +331,9 @@ def parse_questions(rows: list[dict]) -> list[ParsedQuestion]:
             # 丸数字が「1」と読まれた行は、問題文の指示（〜なさい）の後か選択肢の続きで、番号が次の選択肢と一致するときだけ選択肢とみなす
             dm = OCR_DIGIT_OPTION.match(t)
             after_prompt = mode == "options" or any("なさい" in x for x in cur.question_lines[-2:])
-            if dm and after_prompt and int(dm.group(1)) == len(cur.options) + 1:
+            if not dm and not cur.options and cur.question_lines and cur.question_lines[-1].endswith("なさい。"):
+                dm = OCR_FIRST_OPTION.match(t)  # 指示文の直後の行頭の「|」「l」などは①の読み違い
+            if dm and after_prompt and int(dm.group(1) if dm.lastindex else 1) == len(cur.options) + 1:
                 mk = ("circled", len(cur.options), dm.end())
                 t = FAMILIES["circled"][mk[1]] + t[dm.end():]
                 mk = ("circled", mk[1], 1)
@@ -447,8 +450,79 @@ def apply_answer_key(qs: list[ParsedQuestion], key: dict[tuple[str, int], list[s
     return issues
 
 
+def _is_broken(q: ParsedQuestion) -> bool:
+    return len(q.options) < 2 or any(i["code"] == "OPTION_ORDER" for i in q.issues)
+
+
+def chapter_titles(pages_json: dict, chapter_pages: list[int]) -> dict[int, str]:
+    """各章の扉ページの文字（章のタイトル）。撮り直したページの柱（ページ上部の章名）と照らして章を決めるのに使う。"""
+    by_page = {p["page"]: p for p in pages_json["pages"]}
+    out = {}
+    for k, pg in enumerate(sorted(chapter_pages), start=1):
+        txt = "".join(norm(l["text"]) for l in by_page.get(pg, {}).get("lines", []))
+        out[k] = re.sub(r"[\s|]", "", txt)
+    return out
+
+
+def _chapter_from_header(pj: dict, page: int, titles: dict[int, str]) -> int | None:
+    """撮り直したページの上部の行が、どの章のタイトルに一番近いか。はっきりしなければ None。"""
+    from difflib import SequenceMatcher
+    pg = next((p for p in pj["pages"] if p["page"] == page), None)
+    if not pg or not titles:
+        return None
+    best: list[tuple[float, int]] = []
+    for l in pg["lines"][:3]:
+        t = re.sub(r"[\s|]", "", norm(l["text"]))
+        if len(t) < 6:
+            continue
+        for k, title in titles.items():
+            m = SequenceMatcher(None, t, title).find_longest_match(0, len(t), 0, len(title))
+            best.append((m.size / len(t), k))
+    best.sort(reverse=True)
+    if best and best[0][0] >= 0.6 and (len(best) == 1 or best[1][1] == best[0][1] or best[1][0] < best[0][0] - 0.2):
+        return best[0][1]
+    return None
+
+
+def merge_supplements(qs: list[ParsedQuestion], supplements: list[tuple[str, dict, int | None]],
+                      answer_key: dict[tuple[str, int], list[str]] | None,
+                      titles: dict[int, str] | None = None) -> list[dict]:
+    """読み取りが崩れた問題を、撮り直したPDF（補足スキャン）から読んだ問題で置き換える。
+
+    supplements は (ファイル名, pages.json, 章番号または None)。章が無いときは、その番号の問題が
+    ページ上部の章名から章を決め、それも読めなければ、その番号の問題が「見つからない」か
+    「崩れている」章が1つだけならそこに入れる。決められないものは全体の指摘にする。
+    """
+    issues: list[dict] = []
+    by_key = {(q.chapter, q.number): q for q in qs}
+    chapters = sorted({k[0] for k in (answer_key or {})} | {q.chapter for q in qs if q.chapter}, key=lambda c: int(re.sub(r"\D", "", c) or 0))
+    for name, pj, ch_no in supplements:
+        for sq in parse_questions(_flatten(pj)):
+            hdr = None if ch_no else _chapter_from_header(pj, sq.page, titles or {})
+            if ch_no or hdr:
+                cands = [f"第{ch_no or hdr}章"]
+            else:
+                cands = [c for c in chapters
+                         if (answer_key is None or (c, sq.number) in answer_key)
+                         and ((c, sq.number) not in by_key or _is_broken(by_key[(c, sq.number)]))]
+            if len(cands) != 1:
+                issues.append(_issue("SUPPLEMENT_UNPLACED", "warning",
+                                     f"撮り直し {name} の{sq.page}ページの第{sq.number}問をどの章に入れるか決められません（--chapter で指定してください）"))
+                continue
+            sq.chapter, sq.chapter_no = cands[0], int(re.sub(r"\D", "", cands[0]))
+            old = by_key.get((sq.chapter, sq.number))
+            sq.issues.append(_issue("FROM_RESCAN", "review", f"撮り直したPDF（{name} の{sq.page}ページ）から読み取りました"))
+            if old is not None:
+                sq.page, sq.y = old.page, old.y  # 原本PDFでの位置は元の問題のものを使う
+                qs.remove(old)
+            qs.append(sq)
+            by_key[(sq.chapter, sq.number)] = sq
+    return issues
+
+
 def parse_pages(pages_json: dict, *, chapter_pages: list[int] | None = None,
-                answer_key: dict[tuple[str, int], list[str]] | None = None) -> dict:
+                answer_key: dict[tuple[str, int], list[str]] | None = None,
+                supplements: list[tuple[str, dict, int | None]] | None = None) -> dict:
     rows = _flatten(pages_json)
     a_idx, how = _find_answer_start(rows, allow_restart=not chapter_pages)
     q_rows = rows if a_idx is None else rows[:a_idx]
@@ -459,7 +533,11 @@ def parse_pages(pages_json: dict, *, chapter_pages: list[int] | None = None,
     _attach_images(qs, pages_json, (rows[a_idx]["page"], rows[a_idx]["y"]) if a_idx is not None else None)
     if chapter_pages:
         assign_chapters(qs, chapter_pages)
-    global_issues = link(qs, answers)
+    sup_issues = []
+    if supplements:
+        titles = chapter_titles(pages_json, chapter_pages) if chapter_pages else None
+        sup_issues = merge_supplements(qs, supplements, answer_key, titles)
+    global_issues = link(qs, answers) + sup_issues
     if answer_key:
         global_issues = [i for i in global_issues if i["code"] != "ANSWER_WITHOUT_QUESTION"]  # 正解は一覧から取る
         for q in qs:

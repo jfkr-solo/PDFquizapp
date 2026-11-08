@@ -244,3 +244,17 @@ def test_answer_key_and_chapter_pages():
     assert [q["id"] for q in book["questions"]] == ["T03-Q1001", "T03-Q1002", "T03-Q2001"]
     assert book["questions"][0]["source"]["answer_source"] == "answer_key"
     assert book["questions"][0]["correct_answers"] == ["B"]
+
+
+def test_supplement_replaces_broken_question():
+    """撮り直したページの問題で、崩れた問題を差し替える。章はページ上部の章名から決める。"""
+    from pipeline.answer_key import parse_answer_key
+    key = parse_answer_key("第1章 第1問 ② 第2章 第1問 ①")
+    pj = _pages(["ストレスの基礎知識"], ["第1問 一つ目", "① a", "② b"],
+                ["職場環境の改善方法"], ["第1問 崩れた問題", "読めない行"])
+    sup = _pages(["職場環境の改善方法", "第1問 撮り直した問題", "① c", "② d"])
+    parsed = parse_pages(pj, chapter_pages=[1, 3], answer_key=key, supplements=[("01.pdf", sup, None)])
+    q = [q for q in parsed["questions"] if q["chapter"] == "第2章"][0]
+    assert [o["text"] for o in q["options"]] == ["c", "d"]
+    assert q["answer_tokens"] == ["①"] and q["page"] == 4
+    assert any(i["code"] == "FROM_RESCAN" for i in q["issues"])

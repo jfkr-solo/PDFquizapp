@@ -55,6 +55,11 @@ def cmd_convert(a) -> int:
     out = book_dir(a.book_id)
     out.mkdir(parents=True, exist_ok=True)
 
+    # supplement コマンドで同じ条件のまま作り直せるよう、変換の条件を残す
+    settings = {"title": a.title, "version": a.version, "expected": a.expected, "ocr_lang": a.ocr_lang,
+                "chapter_pages": a.chapter_pages, "answer_key": bool(a.answer_key)}
+    (out / "convert.json").write_text(json.dumps(settings, ensure_ascii=False, indent=1), encoding="utf-8")
+
     print("[1/4] PDF抽出 ...")
     pj = out / "pages.json"
     if a.reuse_pages and pj.exists() and json.loads(pj.read_text(encoding="utf-8"))["source_pdf"]["sha256"] == sha256_of(raw_pdf):
@@ -67,12 +72,15 @@ def cmd_convert(a) -> int:
     chapter_pages = [int(x) for x in a.chapter_pages.split(",")] if a.chapter_pages else None
     key = None
     if a.answer_key:
-        key_src = raw_dir / ("answer_key" + Path(a.answer_key).suffix.lower())
+        key_src = Path(a.answer_key) if Path(a.answer_key).parent.resolve() == raw_dir.resolve() else raw_dir / ("answer_key" + Path(a.answer_key).suffix.lower())
         if Path(a.answer_key).resolve() != key_src.resolve():
             shutil.copy2(a.answer_key, key_src)  # 正解一覧も原本と一緒に保管する
         key = load_answer_key(key_src)
         print(f"      正解一覧: {len(key)}問分")
-    parsed = parse_file(pj, out / "parsed.json", chapter_pages=chapter_pages, answer_key=key)
+    sups = _load_supplements(raw_dir, out, a.ocr_lang)
+    if sups:
+        print(f"      撮り直しPDF: {len(sups)}件")
+    parsed = parse_file(pj, out / "parsed.json", chapter_pages=chapter_pages, answer_key=key, supplements=sups)
     if a.ai:
         from .ai_assist import assist_parsed
         parsed = assist_parsed(out / "pages.json", out / "parsed.json")
@@ -85,6 +93,44 @@ def cmd_convert(a) -> int:
 
     print("[4/4] 検証 ...")
     return _print_validation(validate_file(out / "book.json", pages_path=out / "pages.json"), out)
+
+
+def _load_supplements(raw_dir: Path, out: Path, ocr_lang: str) -> list[tuple[str, dict, int | None]]:
+    """raw/<ID>/supplements/ の撮り直しPDFを読み取る（同じPDFは前回の結果を使う）。ファイル名の _ch7 は章の指定。"""
+    import re as _re
+    sup_dir = raw_dir / "supplements"
+    res = []
+    for pdf in sorted(sup_dir.glob("*.pdf")) if sup_dir.is_dir() else []:
+        cache = out / "supplements" / pdf.stem
+        pj = cache / "pages.json"
+        if not (pj.exists() and json.loads(pj.read_text(encoding="utf-8"))["source_pdf"]["sha256"] == sha256_of(pdf)):
+            extract_pdf(pdf, cache, ocr_lang=ocr_lang)
+        m = _re.search(r"_ch(\d+)$", pdf.stem)
+        res.append((pdf.name, json.loads(pj.read_text(encoding="utf-8")), int(m.group(1)) if m else None))
+    return res
+
+
+def cmd_supplement(a) -> int:
+    """読み取りが崩れた問題を撮り直したPDFを追加し、前回と同じ条件で作り直す。"""
+    out = book_dir(a.book_id)
+    conf = out / "convert.json"
+    if not conf.exists():
+        print("エラー: 前回の変換条件（convert.json）がありません。先に convert をやり直してください。", file=sys.stderr)
+        return 2
+    st = json.loads(conf.read_text(encoding="utf-8"))
+    raw_dir = DATA / "raw" / a.book_id
+    sup_dir = raw_dir / "supplements"
+    sup_dir.mkdir(parents=True, exist_ok=True)
+    n = len(list(sup_dir.glob("*.pdf"))) + 1
+    dest = sup_dir / f"{n:02d}{'_ch' + str(a.chapter) if a.chapter else ''}.pdf"
+    shutil.copy2(a.pdf, dest)
+    print(f"撮り直しPDFを {dest} に保存しました")
+    keys = sorted(raw_dir.glob("answer_key.*"))
+    args = argparse.Namespace(pdf=str(raw_dir / "source.pdf"), book_id=a.book_id, title=st["title"], version=st["version"],
+                              expected=st["expected"], ocr_lang=st["ocr_lang"], force_ocr=False, ai=False,
+                              chapter_pages=st["chapter_pages"], answer_key=str(keys[0]) if st["answer_key"] and keys else None,
+                              reuse_pages=True)
+    return cmd_convert(args)
 
 
 def _print_validation(summary: dict, out: Path) -> int:
@@ -166,6 +212,11 @@ def main(argv=None) -> int:
     c.add_argument("--answer-key", help="別紙の正解一覧（PDFまたはテキスト。「第1章 第1問 ②」の並び）。解答ページが読めないとき")
     c.add_argument("--reuse-pages", action="store_true", help="同じPDFなら前回のOCR結果を使い、抽出を飛ばす（解析だけやり直すとき）")
     c.set_defaults(func=cmd_convert)
+    su = sub.add_parser("supplement", help="読み取りが崩れた問題を撮り直したPDFで差し替える")
+    su.add_argument("book_id")
+    su.add_argument("pdf")
+    su.add_argument("--chapter", type=int, help="撮り直したページの章（省略すると、その番号が崩れている章を自動で選ぶ）")
+    su.set_defaults(func=cmd_supplement)
     v = sub.add_parser("validate", help="book.json を再検証してレポートを更新")
     v.add_argument("book_id")
     v.set_defaults(func=cmd_validate)
