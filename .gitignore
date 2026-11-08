@@ -7,3 +7,6 @@ data/raw/*
 data/books/*
 !data/raw/.gitkeep
 !data/books/.gitkeep
+
+# アプリに同梱する問題集（sync-books の出力）。市販の問題集を誤ってコミットしないよう無視する
+web/public/books/
