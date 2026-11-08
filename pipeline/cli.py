@@ -2,6 +2,7 @@
 
 使い方（プロジェクト直下で実行）:
   python -m pipeline.cli convert <PDF> --book-id IT001 --title "IT基礎問題集" [--expected 6] [--ai]
+  python -m pipeline.cli import 問題.jsonl --book-id AB730 --title "…"   # PDFを使わず問題のJSONLから作る
   python -m pipeline.cli validate IT001
   python -m pipeline.cli verify IT001 IT001-Q0003 --note "原本と照合"
   python -m pipeline.cli reject IT001 IT001-Q0004 --note "図が判読不能"
@@ -21,6 +22,7 @@ from pathlib import Path
 
 from .build_json import build_file
 from .answer_key import AnswerKeyError, load_answer_key
+from .authored import AuthoredError
 from .extract import ExtractError, extract_pdf, sha256_of, summarize
 from .parse import load_explanations, load_transcriptions, parse_file
 from .validate import validate_file
@@ -152,6 +154,24 @@ def _print_validation(summary: dict, out: Path) -> int:
     return 1 if summary["schema_errors"] else 0
 
 
+def cmd_import(a) -> int:
+    from .authored import build_authored_book, load_authored, merge_review_state
+    out = book_dir(a.book_id)
+    out.mkdir(parents=True, exist_ok=True)
+    raw = DATA / "raw" / a.book_id
+    raw.mkdir(parents=True, exist_ok=True)
+    src = Path(a.jsonl)
+    if src.resolve() != (raw / "authored.jsonl").resolve():
+        shutil.copyfile(src, raw / "authored.jsonl")
+    path = out / "book.json"
+    old = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    book = merge_review_state(build_authored_book(load_authored(src), book_id=a.book_id, title=a.title, version=a.version), old)
+    path.write_text(json.dumps(book, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"[1/2] 取り込み: {len(book['questions'])}問 → {path}")
+    print("[2/2] 検証")
+    return _print_validation(validate_file(path), out)
+
+
 def cmd_validate(a) -> int:
     out = book_dir(a.book_id)
     return _print_validation(validate_file(out / "book.json", pages_path=out / "pages.json"), out)
@@ -235,6 +255,12 @@ def main(argv=None) -> int:
     su.add_argument("pdf")
     su.add_argument("--chapter", type=int, help="撮り直したページの章（省略すると、その番号が崩れている章を自動で選ぶ）")
     su.set_defaults(func=cmd_supplement)
+    im = sub.add_parser("import", help="PDFを使わず、問題のJSONL（1行1問）から問題集を作る")
+    im.add_argument("jsonl")
+    im.add_argument("--book-id", required=True)
+    im.add_argument("--title", required=True)
+    im.add_argument("--version", default="1.0")
+    im.set_defaults(func=cmd_import)
     v = sub.add_parser("validate", help="book.json を再検証してレポートを更新")
     v.add_argument("book_id")
     v.set_defaults(func=cmd_validate)
@@ -259,12 +285,12 @@ def main(argv=None) -> int:
     au.add_argument("--no-chapters", action="store_true", help="章ごとのMP3を作らない")
     au.set_defaults(func=cmd_audio)
     a = p.parse_args(argv)
-    if a.cmd != "convert" and not (book_dir(a.book_id) / "book.json").exists():
+    if a.cmd not in ("convert", "import") and not (book_dir(a.book_id) / "book.json").exists():
         print(f"エラー: 問題集 {a.book_id} が見つかりません（{book_dir(a.book_id)}）。先に convert を実行してください。", file=sys.stderr)
         return 2
     try:
         return a.func(a)
-    except (ExtractError, AnswerKeyError, FileNotFoundError) as e:
+    except (ExtractError, AnswerKeyError, AuthoredError, FileNotFoundError) as e:
         print(f"エラー: {e}", file=sys.stderr)
         return 2
 
