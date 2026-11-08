@@ -622,10 +622,33 @@ def apply_transcriptions(qs: list[ParsedQuestion], transcriptions: list[dict]) -
     return issues
 
 
+def load_explanations(path: str | Path) -> dict[tuple[int, int], str]:
+    """人が原本の「解答・解説」から書き起こした解説（1行に1問のJSON: chapter, number, explanation）。"""
+    out: dict[tuple[int, int], str] = {}
+    for n, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        t = json.loads(line)
+        for f in ("chapter", "number", "explanation"):
+            if f not in t:
+                raise ValueError(f"{path} の{n}行目に {f} がありません")
+        out[(int(t["chapter"]), int(t["number"]))] = str(t["explanation"]).strip()
+    return out
+
+
+def apply_explanations(qs: list[ParsedQuestion], explanations: dict[tuple[int, int], str]) -> None:
+    """書き起こした解説で、同じ章・番号の問題の解説を置き換える。"""
+    for q in qs:
+        e = explanations.get((q.chapter_no or 0, q.number))
+        if e:
+            q.explanation_lines = e.split("\n")
+
+
 def parse_pages(pages_json: dict, *, chapter_pages: list[int] | None = None,
                 answer_key: dict[tuple[str, int], list[str]] | None = None,
                 supplements: list[tuple[str, dict, int | None]] | None = None,
-                transcriptions: list[dict] | None = None) -> dict:
+                transcriptions: list[dict] | None = None,
+                explanations: dict[tuple[int, int], str] | None = None) -> dict:
     rows = _flatten(pages_json)
     a_idx, how = _find_answer_start(rows, allow_restart=not chapter_pages)
     q_rows = rows if a_idx is None else rows[:a_idx]
@@ -642,6 +665,8 @@ def parse_pages(pages_json: dict, *, chapter_pages: list[int] | None = None,
         sup_issues = merge_supplements(qs, supplements, answer_key, titles)
     if transcriptions:
         sup_issues += apply_transcriptions(qs, transcriptions)
+    if explanations:
+        apply_explanations(qs, explanations)
     global_issues = link(qs, answers) + sup_issues
     if answer_key:
         global_issues = [i for i in global_issues if i["code"] != "ANSWER_WITHOUT_QUESTION"]  # 正解は一覧から取る

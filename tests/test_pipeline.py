@@ -276,3 +276,17 @@ def test_transcription_replaces_question_and_drops_unknown():
     book = build_book(parsed, book_id="T", title="t", version="1")
     b = book["questions"][0]
     assert b["correct_answers"] == ["B"] and b["source"]["extraction"] == "manual" and b["validation_status"] == "pending"
+
+
+def test_explanation_transcription_sets_explanation():
+    """書き起こした解説を、章・番号の合う問題の解説として使う。"""
+    from pipeline.answer_key import parse_answer_key
+    from pipeline.build_json import build_book
+    key = parse_answer_key("第1章 第1問 ② 第1章 第2問 ①")
+    pj = _pages(["第1問 一つ目", "① a", "② b"], ["第2問 二つ目", "① a", "② b"])
+    parsed = parse_pages(pj, chapter_pages=[1], answer_key=key,
+                         explanations={(1, 1): "① 不適切である。\n② 適切である。"})
+    book = build_book(parsed, book_id="T", title="t", version="1")
+    qs = {q["source"]["question_number"]: q for q in book["questions"]}
+    assert qs[1]["explanation"] == "① 不適切である。\n② 適切である。"
+    assert qs[2]["explanation"] == ""
