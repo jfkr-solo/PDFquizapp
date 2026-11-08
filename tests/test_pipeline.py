@@ -258,3 +258,21 @@ def test_supplement_replaces_broken_question():
     assert [o["text"] for o in q["options"]] == ["c", "d"]
     assert q["answer_tokens"] == ["①"] and q["page"] == 4
     assert any(i["code"] == "FROM_RESCAN" for i in q["issues"])
+
+
+def test_transcription_replaces_question_and_drops_unknown():
+    """書き起こした問題で置き換え、正解一覧に無い番号（ページの取り違え）は問題集から外す。"""
+    from pipeline.answer_key import parse_answer_key
+    from pipeline.build_json import build_book
+    key = parse_answer_key("第1章 第1問 ② 第1章 第2問 ①")
+    pj = _pages(["第1問 崩れた問題", "読めない行"], ["第2問 二つ目", "① a", "② b"], ["第9問 迷い込んだ問題", "① x", "② y"])
+    tr = [{"chapter": 1, "number": 1, "pdf_page": 1, "question": "書き起こした問題\nA. 文", "options": ["(A)○", "(A)×"]}]
+    parsed = parse_pages(pj, chapter_pages=[1], answer_key=key, transcriptions=tr)
+    assert [(q["chapter"], q["number"]) for q in parsed["questions"]] == [("第1章", 1), ("第1章", 2)]
+    q = parsed["questions"][0]
+    assert q["question"] == "書き起こした問題\nA. 文" and q["answer_tokens"] == ["②"]
+    assert any(i["code"] == "MANUAL_TRANSCRIPTION" for i in q["issues"])
+    assert any(i["code"] == "NOT_IN_ANSWER_KEY" for i in parsed["issues"])
+    book = build_book(parsed, book_id="T", title="t", version="1")
+    b = book["questions"][0]
+    assert b["correct_answers"] == ["B"] and b["source"]["extraction"] == "manual" and b["validation_status"] == "pending"

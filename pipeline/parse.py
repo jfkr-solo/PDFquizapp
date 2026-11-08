@@ -86,6 +86,7 @@ class ParsedQuestion:
     explanation_lines: list[str] = field(default_factory=list)
     ocr: bool = False
     ai: bool = False
+    manual: bool = False            # 人が原本を見て書き起こした問題（transcriptions.jsonl）
     issues: list[dict] = field(default_factory=list)
 
     @property
@@ -457,6 +458,7 @@ def apply_answer_key(qs: list[ParsedQuestion], key: dict[tuple[str, int], list[s
     """別紙の正解一覧で正解を決める。一覧にあるのに見つからない問題は全体の指摘にする。"""
     issues: list[dict] = []
     seen = set()
+    dropped: list[ParsedQuestion] = []
     for q in qs:
         k = (q.chapter, q.number)
         if k in seen:
@@ -464,13 +466,18 @@ def apply_answer_key(qs: list[ParsedQuestion], key: dict[tuple[str, int], list[s
         seen.add(k)
         toks = key.get(k)
         if toks is None:
-            q.issues.append(_issue("NOT_IN_ANSWER_KEY", "error", f"正解一覧に {q.chapter}第{q.number}問 がありません"))
+            # 正解一覧に無い番号は、ページの取り違え（別の章に入った問題や解答部の行）なので問題集から外す
+            dropped.append(q)
+            issues.append(_issue("NOT_IN_ANSWER_KEY", "warning",
+                                 f"正解一覧に {q.chapter}第{q.number}問（{q.page}ページ）がないため、問題集から外しました"))
             continue
         if q.answer_tokens and q.answer_tokens != toks:
             q.issues.append(_issue("ANSWER_KEY_DIFFERS", "warning",
                                    f"解答ページの読み取り（{''.join(q.answer_tokens)}）と正解一覧（{''.join(toks)}）が違います。正解一覧を使いました"))
         q.answer_raw, q.answer_tokens, q.numeric_answer, q.answer_page = "".join(toks), toks, None, None
         q.answer_source = "answer_key"
+    for q in dropped:
+        qs.remove(q)
     missing = [k for k in key if k not in seen]
     for ch, n in missing:
         issues.append(_issue("QUESTION_NOT_FOUND", "error", f"正解一覧にある {ch}第{n}問 が問題ページから見つかりません"))
@@ -564,14 +571,61 @@ def merge_supplements(qs: list[ParsedQuestion], supplements: list[tuple[str, dic
             if old is not None:
                 sq.page, sq.y = old.page, old.y  # 原本PDFでの位置は元の問題のものを使う
                 qs.remove(old)
+            else:
+                # 原本で見つからなかった問題は、同じ章で直前の番号の問題のページを目安にする
+                prev = [q for q in qs if q.chapter == sq.chapter and q.number < sq.number]
+                sq.page = max(prev, key=lambda q: q.number).page if prev else 0
             qs.append(sq)
             by_key[(sq.chapter, sq.number)] = sq
     return issues
 
 
+def load_transcriptions(path: str | Path) -> list[dict]:
+    """人が原本を見て書き起こした問題（1行に1問のJSON）。章・番号・ページ・問題文・選択肢を持つ。"""
+    out = []
+    for n, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        t = json.loads(line)
+        for f in ("chapter", "number", "question", "options"):
+            if f not in t:
+                raise ValueError(f"{path} の{n}行目に {f} がありません")
+        out.append(t)
+    return out
+
+
+def apply_transcriptions(qs: list[ParsedQuestion], transcriptions: list[dict]) -> list[dict]:
+    """書き起こした問題で、同じ章・番号の読み取り結果を置き換える（無ければ追加）。原本との照合は人が行う前提で要確認のまま。"""
+    issues: list[dict] = []
+    for t in transcriptions:
+        ch_no, num = int(t["chapter"]), int(t["number"])
+        chapter = f"第{ch_no}章"
+        old = [q for q in qs if q.chapter == chapter and q.number == num]
+        marks = FAMILIES["circled"]
+        if len(t["options"]) > len(marks):
+            issues.append(_issue("TRANSCRIPTION_INVALID", "error", f"書き起こし {chapter}第{num}問 の選択肢が多すぎます"))
+            continue
+        q = ParsedQuestion(number=num, occurrence=1, chapter=chapter, chapter_no=ch_no,
+                           category=old[0].category if old else "",
+                           page=int(t.get("pdf_page") or (old[0].page if old else 0)),
+                           y=old[0].y if old else 0.0,
+                           question_lines=str(t["question"]).split("\n"),
+                           options=[Option(id=chr(ord("A") + i), label=marks[i], text=str(o)) for i, o in enumerate(t["options"])],
+                           option_family="circled", manual=True)
+        q.end_page = q.page
+        q.raw_lines = [f"第{num}問 {t['question']}"] + [f"{marks[i]} {o}" for i, o in enumerate(t["options"])]
+        q.images = old[0].images if old else []
+        q.issues.append(_issue("MANUAL_TRANSCRIPTION", "review", "原本の画像から書き起こした問題のため、原本との照合が必要です"))
+        for o in old:
+            qs.remove(o)
+        qs.append(q)
+    return issues
+
+
 def parse_pages(pages_json: dict, *, chapter_pages: list[int] | None = None,
                 answer_key: dict[tuple[str, int], list[str]] | None = None,
-                supplements: list[tuple[str, dict, int | None]] | None = None) -> dict:
+                supplements: list[tuple[str, dict, int | None]] | None = None,
+                transcriptions: list[dict] | None = None) -> dict:
     rows = _flatten(pages_json)
     a_idx, how = _find_answer_start(rows, allow_restart=not chapter_pages)
     q_rows = rows if a_idx is None else rows[:a_idx]
@@ -586,6 +640,8 @@ def parse_pages(pages_json: dict, *, chapter_pages: list[int] | None = None,
     if supplements:
         titles = chapter_titles(pages_json, chapter_pages) if chapter_pages else None
         sup_issues = merge_supplements(qs, supplements, answer_key, titles)
+    if transcriptions:
+        sup_issues += apply_transcriptions(qs, transcriptions)
     global_issues = link(qs, answers) + sup_issues
     if answer_key:
         global_issues = [i for i in global_issues if i["code"] != "ANSWER_WITHOUT_QUESTION"]  # 正解は一覧から取る

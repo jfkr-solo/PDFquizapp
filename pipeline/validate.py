@@ -112,7 +112,9 @@ def check_question(q: dict, ctx: dict) -> list[dict]:
     src = q["source"]
     if pages and not (1 <= src["page"] <= pages):
         iss.append(_issue("PAGE_OUT_OF_RANGE", "error", f"ページ番号{src['page']}が原本の範囲（1〜{pages}）外です"))
-    elif ctx["page_texts"] and src.get("raw_text"):
+    elif ctx["page_texts"] and src.get("raw_text") and src.get("extraction") != "manual" \
+            and not any(i["code"] == "FROM_RESCAN" for i in q.get("validation_issues", [])):
+        # 書き起こしや撮り直しの文は原本ページのOCRと一致しないので照らさない（どちらも要確認になる）
         head = _norm_text(src["raw_text"].splitlines()[0])[:15]
         if head and head not in ctx["page_texts"].get(src["page"], ""):
             iss.append(_issue("PAGE_MISMATCH", "error", f"問題の書き出しが{src['page']}ページに見当たりません"))
@@ -150,7 +152,8 @@ def check_book(book: dict) -> tuple[list[dict], dict[str, list[dict]]]:
     if exp and exp != len(qs):
         book_iss.append(_issue("COUNT_MISMATCH", "error", f"想定{exp}問に対して{len(qs)}問を抽出しました"))
     ac = book.get("answers_count")
-    if ac is not None and ac != len(qs):
+    from_key = qs and all(q["source"].get("answer_source") == "answer_key" for q in qs)  # 正解を別紙の一覧から取った本は解答ページの数を問わない
+    if ac is not None and ac != len(qs) and not from_key:
         book_iss.append(_issue("ANSWER_COUNT_MISMATCH", "error", f"問題{len(qs)}問に対して解答が{ac}件です"))
 
     # 8. 重複問題
