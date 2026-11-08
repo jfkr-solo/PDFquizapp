@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { listenQueue, loadManifest } from "@/lib/audio";
 import { bookBase, loadBook } from "@/lib/data";
+import { dueLabel, nextDueAt, reviewSchedule } from "@/lib/review";
 import { accuracyBy, eligible, isReady, MODE_LABEL, pickQuestions, statsByQuestion } from "@/lib/quiz";
 import { localStore } from "@/lib/storage";
 import { syncBook, type SyncResult } from "@/lib/sync";
@@ -62,8 +63,10 @@ function BookPage() {
   const ready = book.questions.filter((q) => isReady(book, q));
   const pendingCount = book.questions.filter((q) => q.validation_status === "pending").length;
   const stats = statsByQuestion(logs);
-  const weakCount = pickQuestions(eligible(book, "weak", filters), "weak", logs).length;
-  const reviewCount = pickQuestions(eligible(book, "review", filters), "review", logs).length;
+  const weakCount = pickQuestions(eligible(book, "weak", { ...filters, includePending }), "weak", logs).length;
+  const reviewCount = pickQuestions(eligible(book, "review", { ...filters, includePending }), "review", logs).length;
+  const reviewTotal = reviewSchedule(logs).size;
+  const nextReview = nextDueAt(logs);
   const normalCount = eligible(book, "normal", { ...filters, includePending }).length;
   const examPool = eligible(book, "exam", filters).length;
   const total = logs.length;
@@ -83,7 +86,7 @@ function BookPage() {
     if (filters.category) p.set("category", filters.category);
     if (filters.difficulty) p.set("difficulty", String(filters.difficulty));
     if (mode === "normal" && random) p.set("random", "1");
-    if (mode === "normal" && includePending) p.set("pending", "1");
+    if (mode !== "exam" && includePending) p.set("pending", "1");
     router.push(`/play/?${p}`);
   };
 
@@ -177,7 +180,11 @@ function BookPage() {
         </div>
         <div className="card">
           <strong>復習</strong>
-          <div className="muted">解いた {reviewCount}問を前回不正解から</div>
+          <div className="muted">
+            間違えた問題を 1日後・3日後・7日後・14日後・30日後 に出し直します。今日の復習 {reviewCount}問
+            {reviewCount === 0 && nextReview ? `（次は${dueLabel(nextReview)}）` : ""}
+            {reviewTotal > 0 ? `／復習中 ${reviewTotal}問` : ""}
+          </div>
           <button className="btn block" style={{ marginTop: 8 }} disabled={!reviewCount} onClick={() => start("review")}>始める</button>
         </div>
       </div>
