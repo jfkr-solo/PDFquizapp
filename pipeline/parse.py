@@ -127,7 +127,7 @@ def _flatten(pages_json: dict) -> list[dict]:
                 t = OCR_LEAD_JUNK.sub("", t)
             if not t or PAGE_NUMBER.match(t) or t in repeated:
                 continue
-            rows.append({"text": t, "page": p["page"], "y": l["y0"], "ocr": p["method"] == "ocr",
+            rows.append({"text": t, "page": p["page"], "y": l["y0"], "x": l.get("x0", 0), "ocr": p["method"] == "ocr",
                          "ai": p["method"] == "ai_assisted"})
     return rows
 
@@ -273,6 +273,19 @@ def parse_answers(rows: list[dict]) -> tuple[list[ParsedAnswer], list[dict]]:
     return answers, stray
 
 
+OUTDENT_MAX_OPTIONS = 4  # 字下げだけで選択肢とみなすのは4つまで（それ以降は問題文の後の別の文の可能性が高い）
+OCR_MARK_JUNK = re.compile(r"^[\d①-⑧$|｜()（）@®©Qさきもしdo'\"‘“・.,:;\s]{1,3}(?=\S)")
+
+
+def _outdented(r: dict, last: dict | None, cur: ParsedQuestion) -> bool:
+    """OCRの行が、直前の行より左（選択肢の書き出し）から始まっているか。指示文の直後の1行目は選択肢①とみなす。"""
+    if not r["ocr"] or last is None or last["page"] != r["page"] or not r.get("x") or not last.get("x"):
+        return False
+    if not cur.options:
+        return bool(cur.question_lines) and cur.question_lines[-1].rstrip(" |").endswith("なさい。") and r["x"] <= last["x"] + 2
+    return r["x"] <= last["x"] - 6
+
+
 def _label(fam: str, i: int) -> str:
     """記号ファミリーのi番目（範囲外なら '?'）。選択肢が9個以上ある・順番が崩れたOCR結果でも止まらないようにする。"""
     return FAMILIES[fam][i] if 0 <= i < len(FAMILIES[fam]) else "?"
@@ -285,8 +298,10 @@ def parse_questions(rows: list[dict]) -> list[ParsedQuestion]:
     chapter, category = "", ""
     cur: ParsedQuestion | None = None
     mode = "question"  # question | options | explanation
+    prev_row: dict | None = None
     for r in rows:
         t, loose = r["text"], r["ocr"]
+        last_row, prev_row = prev_row, r
         cm = CHAPTER.match(t)
         if cm:
             chapter, category = f"第{cm.group(1)}章", cm.group(2).strip()
@@ -337,9 +352,21 @@ def parse_questions(rows: list[dict]) -> list[ParsedQuestion]:
                 mk = ("circled", len(cur.options), dm.end())
                 t = FAMILIES["circled"][mk[1]] + t[dm.end():]
                 mk = ("circled", mk[1], 1)
+            elif after_prompt and len(cur.options) < OUTDENT_MAX_OPTIONS and not re.match(r"^\S{0,3}[①-⑧]", t) and _outdented(r, last_row, cur):
+                # 記号が読めなくても、選択肢の1行目は続きの行より左から始まる（ぶら下げインデント）
+                t = FAMILIES["circled"][len(cur.options)] + OCR_MARK_JUNK.sub("", t)
+                mk = ("circled", len(cur.options), 1)
         if mk:
             fam, idx, _ = mk
             expected = len(cur.options) if cur.option_family in (None, fam) else -1
+            if loose and fam == "circled" and expected >= 0 and idx != expected and mode == "options" and expected < OUTDENT_MAX_OPTIONS:
+                # OCRは丸数字を取り違えやすい（④→⑥など）。選択肢の途中なら順番どおりの記号とみなす
+                cur.issues.append(_issue("OPTION_MARK_GUESSED", "review",
+                                         f"選択肢の記号「{FAMILIES[fam][idx]}」を「{_label(fam, expected)}」と読み替えました"))
+                mk = (fam, expected, mk[2])
+                t = FAMILIES[fam][expected] + t[mk[2]:]
+                mk = (fam, expected, 1)
+                idx = expected
             if idx == expected and (cur.option_family in (None, fam)):
                 for i, txt in _split_inline(t, fam, idx, loose):
                     cur.options.append(Option(chr(ord("A") + i), FAMILIES[fam][i], txt))
@@ -484,6 +511,11 @@ def _chapter_from_header(pj: dict, page: int, titles: dict[int, str]) -> int | N
     return None
 
 
+def _quality(q: ParsedQuestion) -> tuple[bool, bool, int]:
+    """読み取りの良さ（大きいほど良い）：崩れていない、選択肢が4つ、選択肢の数。"""
+    return (not _is_broken(q), len(q.options) == 4, min(len(q.options), 4))
+
+
 def merge_supplements(qs: list[ParsedQuestion], supplements: list[tuple[str, dict, int | None]],
                       answer_key: dict[tuple[str, int], list[str]] | None,
                       titles: dict[int, str] | None = None) -> list[dict]:
@@ -497,13 +529,28 @@ def merge_supplements(qs: list[ParsedQuestion], supplements: list[tuple[str, dic
     by_key = {(q.chapter, q.number): q for q in qs}
     chapters = sorted({k[0] for k in (answer_key or {})} | {q.chapter for q in qs if q.chapter}, key=lambda c: int(re.sub(r"\D", "", c) or 0))
     for name, pj, ch_no in supplements:
+        # ページ上部の章名が読めたページの章。読めないページ（奇数ページは節の名前のことが多い）は、
+        # 撮り直しが本の順番に並んでいる前提で、前後の読めたページが同じ章ならその章とみなす
+        pages = [p["page"] for p in pj["pages"]]
+        known = {pg: _chapter_from_header(pj, pg, titles or {}) for pg in pages}
+        page_ch: dict[int, set[int]] = {}
+        for i, pg in enumerate(pages):
+            if known[pg]:
+                page_ch[pg] = {known[pg]}
+                continue
+            prev = next((known[x] for x in reversed(pages[:i]) if known[x]), None)
+            nxt = next((known[x] for x in pages[i + 1:] if known[x]), None)
+            page_ch[pg] = {c for c in (prev, nxt) if c}
         for sq in parse_questions(_flatten(pj)):
-            hdr = None if ch_no else _chapter_from_header(pj, sq.page, titles or {})
-            if ch_no or hdr:
-                cands = [f"第{ch_no or hdr}章"]
+            if ch_no:
+                cands = [f"第{ch_no}章"]
+            elif len(page_ch.get(sq.page, set())) == 1:
+                cands = [f"第{next(iter(page_ch[sq.page]))}章"]
             else:
+                near = {f"第{c}章" for c in page_ch.get(sq.page, set())}
                 cands = [c for c in chapters
-                         if (answer_key is None or (c, sq.number) in answer_key)
+                         if (not near or c in near)
+                         and (answer_key is None or (c, sq.number) in answer_key)
                          and ((c, sq.number) not in by_key or _is_broken(by_key[(c, sq.number)]))]
             if len(cands) != 1:
                 issues.append(_issue("SUPPLEMENT_UNPLACED", "warning",
@@ -511,6 +558,8 @@ def merge_supplements(qs: list[ParsedQuestion], supplements: list[tuple[str, dic
                 continue
             sq.chapter, sq.chapter_no = cands[0], int(re.sub(r"\D", "", cands[0]))
             old = by_key.get((sq.chapter, sq.number))
+            if old is not None and _quality(sq) <= _quality(old):
+                continue  # 撮り直しの方が良く読めたときだけ差し替える
             sq.issues.append(_issue("FROM_RESCAN", "review", f"撮り直したPDF（{name} の{sq.page}ページ）から読み取りました"))
             if old is not None:
                 sq.page, sq.y = old.page, old.y  # 原本PDFでの位置は元の問題のものを使う
