@@ -179,8 +179,12 @@ def _set_status(a, status: str) -> int:
 
 
 def cmd_publish(a) -> int:
-    from .supabase_import import PublishError, publish_book
+    from .supabase_import import PublishError, publish_book, publish_sql
     try:
+        if a.sql:
+            Path(a.sql).write_text(publish_sql(book_dir(a.book_id) / "book.json"), encoding="utf-8")
+            print(f"SQLを書き出しました: {a.sql}（Supabase の SQL Editor に貼って実行してください）")
+            return 0
         r = publish_book(book_dir(a.book_id) / "book.json")
     except PublishError as e:
         print(f"エラー: {e}", file=sys.stderr)
@@ -238,6 +242,7 @@ def main(argv=None) -> int:
         s.set_defaults(func=lambda a, st=status: _set_status(a, st))
     pb = sub.add_parser("publish", help="book.json をSupabaseに取り込む（STEP 8）")
     pb.add_argument("book_id")
+    pb.add_argument("--sql", metavar="FILE", help="取り込まずに、SQL Editor で実行するSQLをFILEに書き出す（service_role キー不要）")
     pb.set_defaults(func=cmd_publish)
     au = sub.add_parser("audio", help="問題ごと・章ごとのMP3を作る（STEP 9）")
     au.add_argument("book_id")

@@ -88,3 +88,50 @@ def publish_book(book_path: str | Path, *, request=_request) -> dict:
     _upsert(base, key, "questions", rows, "id", request)
     return {"book_id": bid, "version": ver, "questions": len(rows),
             "ready": sum(q["validation_status"] in ("verified", "auto_ok") for q in book["questions"])}
+
+
+def _dollar(s: str) -> str:
+    """SQLのドル引用。中身に区切りが現れない印を選ぶ。"""
+    tag = "j"
+    while f"${tag}$" in s:
+        tag += "j"
+    return f"${tag}${s}${tag}$"
+
+
+def publish_sql(book_path: str | Path) -> str:
+    """publish と同じ取り込みを、Supabase の SQL Editor に貼って実行するSQLにする。
+    service_role キーをこの環境に置かずに取り込むときに使う（Storage へのバックアップは行わない）。"""
+    from .validate import schema_errors
+
+    book = json.loads(Path(book_path).read_text(encoding="utf-8"))
+    errs = schema_errors(book)
+    if errs:
+        raise PublishError(f"JSON Schema エラーが{len(errs)}件あるため取り込みません。先に validate を実行して直してください。")
+    bid, ver = book["book_id"], book["version"]
+    sha = (book.get("source_pdf") or {}).get("sha256")
+    rows = json.dumps([question_row(book, q) for q in book["questions"]], ensure_ascii=False)
+    ids = json.dumps([q["id"] for q in book["questions"]])
+    return f"""-- 問題集 {bid} v{ver} を取り込む（publish と同じ内容）。何回実行しても大丈夫です。
+begin;
+
+insert into public.books (book_id, title, current_version) values ({_dollar(bid)}, {_dollar(book["book_title"])}, {_dollar(ver)})
+  on conflict (book_id) do update set title = excluded.title, current_version = excluded.current_version, updated_at = now();
+
+insert into public.book_versions (book_id, version, json_path, sha256, question_count)
+  values ({_dollar(bid)}, {_dollar(ver)}, {_dollar(f"{bid}/{ver}.json")}, {_dollar(sha) if sha else "null"}, {len(book["questions"])})
+  on conflict (book_id, version) do update set question_count = excluded.question_count;
+
+insert into public.questions (id, book_id, version, chapter, category, difficulty, question_type, validation_status, body)
+select r.id, r.book_id, r.version, r.chapter, r.category, r.difficulty, r.question_type, r.validation_status, r.body
+from jsonb_populate_recordset(null::public.questions, {_dollar(rows)}::jsonb) r
+on conflict (id) do update set version = excluded.version, body = excluded.body, validation_status = excluded.validation_status,
+  chapter = excluded.chapter, category = excluded.category, difficulty = excluded.difficulty, updated_at = now();
+
+-- この版に無くなった問題は消す
+delete from public.questions where book_id = {_dollar(bid)} and not (id = any (array(select jsonb_array_elements_text({_dollar(ids)}::jsonb))));
+
+commit;
+
+select count(*) as questions, count(*) filter (where validation_status in ('verified', 'auto_ok')) as ready
+from public.questions where book_id = {_dollar(bid)};
+"""
