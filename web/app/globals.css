@@ -28,7 +28,7 @@ a { color: var(--accent); }
 .btn.block { width: 100%; }
 .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
-select, input[type=text], input[type=number] { min-height: 44px; font-size: 16px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); width: 100%; }
+select, input[type=text], input[type=number], input[type=email], input[type=password] { min-height: 44px; font-size: 16px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); width: 100%; }
 label.field { display: block; margin: 8px 0; font-size: 14px; color: var(--muted); }
 label.check { display: flex; gap: 8px; align-items: center; min-height: 44px; }
 .progress { height: 6px; background: var(--line); border-radius: 999px; overflow: hidden; }
